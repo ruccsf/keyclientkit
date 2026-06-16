@@ -1,0 +1,25 @@
+# Claude Code Skill — 集团客户合作策略报告生成系统
+
+# 敏感配置（含 OAuth token）
+config.json
+
+# 客户会话数据
+sessions/
+output/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 环境
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
