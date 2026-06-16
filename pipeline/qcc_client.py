@@ -281,6 +281,10 @@ def _call_mcp_server(server: str, tool_name: str, args: dict, timeout: int = 30)
     if 'error' in result:
         err = result['error']
         msg = err.get('message', str(err))
+        code = err.get('code', 0)
+        # 积分/额度不足 → 返回标记 dict，由上层统一处理
+        if '积分余额不足' in msg or '额度不足' in msg or code == -32000:
+            return {'_qcc_error': 'points_insufficient', '_qcc_error_msg': msg}
         # 某些 "错误" 实际上是正常的（如"未发现记录"）
         if '未发现' in msg or '未匹配' in msg:
             return {'搜索结果': msg}

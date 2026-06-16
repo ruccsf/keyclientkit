@@ -1279,32 +1279,32 @@ def fetch_qcc_data(client_name: str, tools_filter: list = None) -> dict:
 
     # ---- 企查查积分检查 ----
     total_tools = len(all_tools)
-    ok_count = total_tools - len(errors)
+    ok_count = sum(1 for v in results.values() if v and not (isinstance(v, dict) and v.get('_qcc_error') == 'points_insufficient'))
+    credit_exhausted = []  # 积分不足的工具名
     credit_warning = False
 
-    # 检查 1: 成功率过低（<50%）
-    if ok_count < total_tools * 0.5:
-        credit_warning = True
-
-    # 检查 2: QCC 结算字段 _qcc_settlement（企查查自己的积分追踪）
-    settlements_seen = set()
+    # 检查: 是否有工具返回了积分不足错误（JSON-RPC code=-32000, message="当前积分余额不足"）
     for key, result in results.items():
-        if result and isinstance(result, dict):
-            s = result.get('_qcc_settlement', '')
-            if s:
-                settlements_seen.add(s)
-    # 如果所有成功的调用都是 free_* 结算（即没消耗积分 = 积分可能耗尽了）
-    if settlements_seen and all(s.startswith('free_') for s in settlements_seen):
+        if isinstance(result, dict) and result.get('_qcc_error') == 'points_insufficient':
+            credit_exhausted.append(key)
+            credit_warning = True
+
+    # 检查: 成功率过低（<50%）
+    if ok_count < total_tools * 0.5:
         credit_warning = True
 
     if credit_warning:
         print(f'⚠️  企查查积分可能不足！')
+        if credit_exhausted:
+            print(f'   积分不足: {", ".join(credit_exhausted)}（{len(credit_exhausted)}/{total_tools} 个工具）')
         print(f'   成功: {ok_count}/{total_tools} 个工具')
         print(f'   失败: {", ".join(k for k,_ in errors) if errors else "无"}')
-        print(f'   结算类型: {", ".join(settlements_seen) if settlements_seen else "未知"}')
-        print(f'   建议: 检查企查查账户积分余额，或使用会员账号重新采集')
-        print(f'   影响: 大量 🟢 字段将保持空置，不适合用 Web Search 硬补')
+        print(f'   建议: 充值企查查积分或使用会员账号重新采集')
+        print(f'   影响: 大量 🟢 字段空缺，不适合用 Web Search 硬补')
         print()
+        # 把积分不足的结果设为 None，让下游映射代码跳过
+        for key in credit_exhausted:
+            results[key] = None
 
     # ---- Chapter 1: 客户核心画像 ----
     ch1 = data['chapters']['chapter1']
