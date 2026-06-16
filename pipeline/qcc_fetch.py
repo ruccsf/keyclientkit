@@ -1277,6 +1277,31 @@ def fetch_qcc_data(client_name: str, tools_filter: list = None) -> dict:
 
     print()
 
+    # ---- 企查查积分检查 ----
+    total_tools = len(all_tools)
+    ok_count = total_tools - len(errors)
+    credit_warning = False
+
+    # 检查 1: 成功率过低
+    if ok_count < total_tools * 0.5:
+        credit_warning = True
+
+    # 检查 2: 返回数据中是否包含积分不足的提示
+    for key, result in results.items():
+        if result and isinstance(result, dict):
+            for v in result.values():
+                if isinstance(v, str) and ('积分不足' in v or '额度不足' in v or '配额已用完' in v):
+                    credit_warning = True
+                    break
+
+    if credit_warning:
+        print(f'⚠️  企查查积分可能不足！')
+        print(f'   成功: {ok_count}/{total_tools} 个工具（{", ".join(k for k,v in results.items() if v)}）')
+        print(f'   失败: {", ".join(k for k,_ in errors) if errors else "无"}')
+        print(f'   建议: 检查企查查账户积分余额，或使用会员账号重新采集')
+        print(f'   影响: 大量 🟢 字段将保持空置，需通过 Web Search 补充')
+        print()
+
     # ---- Chapter 1: 客户核心画像 ----
     ch1 = data['chapters']['chapter1']
     ch1_sec1 = ch1['（1）集团主体资质与核心优势']
