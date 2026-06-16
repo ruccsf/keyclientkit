@@ -288,15 +288,22 @@ def _call_mcp_server(server: str, tool_name: str, args: dict, timeout: int = 30)
 
     # 提取 content → text → JSON
     r = result.get('result', {})
+    extra = r.get('_extra', {})
     content = r.get('content', [])
     if content:
         text = content[0].get('text', '')
         if text:
             try:
-                return json.loads(text)
+                data = json.loads(text)
+                # 保留 QCC 结算信息（积分/额度追踪）
+                if extra:
+                    data['_qcc_settlement'] = extra.get('settlement', '')
+                return data
             except json.JSONDecodeError:
-                return {'_raw_text': text}
+                return {'_raw_text': text, '_qcc_settlement': extra.get('settlement', '')}
 
+    if extra:
+        r['_qcc_settlement'] = extra.get('settlement', '')
     return r
 
 
