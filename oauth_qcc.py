@@ -139,20 +139,42 @@ def refresh_access_token(client_id: str, refresh_token: str,
         raise Exception(f'Token 刷新失败: {resp.status_code} {resp.text[:300]}')
 
 
+def _get_server_name(resource: str) -> str:
+    """根据 resource URL 反查服务器名"""
+    for name, url in QCC_RESOURCES.items():
+        if url == resource:
+            return name
+    return 'company'
+
+
 def get_valid_token(resource: str = DEFAULT_RESOURCE) -> str:
     """
     从配置获取有效的 access_token。如果过期则自动刷新。
     如果完全未授权，抛出 QccAuthError。
     返回: Bearer token string
+    兼容新旧两种 config 格式。
     """
     config = _load_config()
     oauth = config.get('qcc_oauth', {})
-    access_token = oauth.get('access_token', '')
-    refresh_token_val = oauth.get('refresh_token', '')
-    client_id = oauth.get('client_id', '')
-    obtained_at = oauth.get('_obtained_at', 0)
-    expires_in = oauth.get('expires_in', 3600)
-    redirect_uri = oauth.get('redirect_uri', '')
+
+    # 确定服务器名 + 提取 token 信息
+    server_name = _get_server_name(resource)
+
+    # 新格式: qcc_oauth.{server}.access_token
+    if server_name in oauth and isinstance(oauth[server_name], dict):
+        token_info = oauth[server_name]
+    # 旧格式: qcc_oauth.access_token（视为 company）
+    elif 'access_token' in oauth:
+        token_info = oauth
+    else:
+        raise QccAuthError()
+
+    access_token = token_info.get('access_token', '')
+    refresh_token_val = token_info.get('refresh_token', '')
+    client_id = token_info.get('client_id', '')
+    obtained_at = token_info.get('_obtained_at', 0)
+    expires_in = token_info.get('expires_in', 3600)
+    redirect_uri = token_info.get('redirect_uri', '')
 
     if not access_token:
         raise QccAuthError()
@@ -167,7 +189,9 @@ def get_valid_token(resource: str = DEFAULT_RESOURCE) -> str:
             new_tokens = refresh_access_token(client_id, refresh_token_val, resource)
             new_tokens['client_id'] = client_id
             new_tokens['redirect_uri'] = redirect_uri
-            config['qcc_oauth'] = new_tokens
+            # 保存到对应服务器名下
+            oauth[server_name] = new_tokens
+            config['qcc_oauth'] = oauth
             _save_config(config)
             return new_tokens['access_token']
         except Exception:
@@ -381,40 +405,51 @@ def run_manual_auth(resource: str = DEFAULT_RESOURCE) -> dict:
 
 
 def print_token_status():
-    """打印当前 token 状态"""
+    """打印当前 token 状态（兼容新旧格式，显示所有已授权服务器）"""
     config = _load_config()
     oauth = config.get('qcc_oauth', {})
 
-    if not oauth.get('access_token'):
+    # 收集所有已授权的服务器
+    servers = {}
+    # 新格式: qcc_oauth.{server}.access_token
+    for name in QCC_RESOURCES:
+        if name in oauth and isinstance(oauth[name], dict) and oauth[name].get('access_token'):
+            servers[name] = oauth[name]
+    # 旧格式: qcc_oauth.access_token（视为 company）
+    if not servers and 'access_token' in oauth:
+        servers['company'] = oauth
+
+    if not servers:
         print('❌ 未授权 — 请运行: python oauth_qcc.py auth')
         return
 
-    access_token = oauth['access_token']
-    obtained_at = oauth.get('_obtained_at', 0)
-    expires_in = oauth.get('expires_in', 3600)
+    for server_name, token_info in servers.items():
+        access_token = token_info['access_token']
+        obtained_at = token_info.get('_obtained_at', 0)
+        expires_in = token_info.get('expires_in', 3600)
 
-    # 解码 JWT
-    parts = access_token.split('.')
-    if len(parts) == 3:
-        payload = parts[1] + '=' * (4 - len(parts[1]) % 4)
-        try:
-            decoded = json.loads(base64.urlsafe_b64decode(payload))
-        except Exception:
+        # 解码 JWT
+        parts = access_token.split('.')
+        if len(parts) == 3:
+            payload = parts[1] + '=' * (4 - len(parts[1]) % 4)
+            try:
+                decoded = json.loads(base64.urlsafe_b64decode(payload))
+            except Exception:
+                decoded = {}
+        else:
             decoded = {}
-    else:
-        decoded = {}
 
-    now = time.time()
-    expires_at = obtained_at + expires_in
-    is_valid = now < expires_at - 300
+        now = time.time()
+        expires_at = obtained_at + expires_in
+        is_valid = now < expires_at - 300
 
-    print(f'{"✅ Token 有效" if is_valid else "⚠️  Token 已过期（下次使用时会自动刷新）"}')
-    print(f'   资源:        {decoded.get("resource", "?")}')
-    print(f'   作用域:      {decoded.get("scope", "?")}')
-    print(f'   签发时间:     {datetime.fromtimestamp(decoded.get("iat", obtained_at)).strftime("%Y-%m-%d %H:%M:%S")}')
-    print(f'   过期时间:     {datetime.fromtimestamp(decoded.get("exp", expires_at)).strftime("%Y-%m-%d %H:%M:%S")}')
-    print(f'   过期倒计时:   {int((expires_at - now) // 60)} 分钟')
-    print(f'   refresh_token: {"有" if oauth.get("refresh_token") else "无"}')
+        print(f'\n[{server_name}] {"✅ Token 有效" if is_valid else "⚠️  Token 已过期（下次使用时会自动刷新）"}')
+        print(f'   资源:        {decoded.get("resource", "?")}')
+        print(f'   作用域:      {decoded.get("scope", "?")}')
+        print(f'   签发时间:     {datetime.fromtimestamp(decoded.get("iat", obtained_at)).strftime("%Y-%m-%d %H:%M:%S")}')
+        print(f'   过期时间:     {datetime.fromtimestamp(decoded.get("exp", expires_at)).strftime("%Y-%m-%d %H:%M:%S")}')
+        print(f'   过期倒计时:   {int((expires_at - now) // 60)} 分钟')
+        print(f'   refresh_token: {"有" if token_info.get("refresh_token") else "无"}')
 
 
 # ---- CLI ----
