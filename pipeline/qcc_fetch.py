@@ -1279,32 +1279,21 @@ def fetch_qcc_data(client_name: str, tools_filter: list = None) -> dict:
 
     # ---- 企查查积分检查 ----
     total_tools = len(all_tools)
-    ok_count = sum(1 for v in results.values() if v and not (isinstance(v, dict) and v.get('_qcc_error') == 'points_insufficient'))
     credit_exhausted = []  # 积分不足的工具名
-    credit_warning = False
 
-    # 检查: 是否有工具返回了积分不足错误（JSON-RPC code=-32000, message="当前积分余额不足"）
+    # 检查: JSON-RPC 错误 code=-32000, message="当前积分余额不足"
     for key, result in results.items():
         if isinstance(result, dict) and result.get('_qcc_error') == 'points_insufficient':
             credit_exhausted.append(key)
-            credit_warning = True
 
-    # 检查: 成功率过低（<50%）
-    if ok_count < total_tools * 0.5:
-        credit_warning = True
-
-    if credit_warning:
-        print(f'⚠️  企查查积分可能不足！')
-        if credit_exhausted:
-            print(f'   积分不足: {", ".join(credit_exhausted)}（{len(credit_exhausted)}/{total_tools} 个工具）')
-        print(f'   成功: {ok_count}/{total_tools} 个工具')
-        print(f'   失败: {", ".join(k for k,_ in errors) if errors else "无"}')
-        print(f'   建议: 充值企查查积分或使用会员账号重新采集')
-        print(f'   影响: 大量 🟢 字段空缺，不适合用 Web Search 硬补')
+    if credit_exhausted:
         print()
-        # 把积分不足的结果设为 None，让下游映射代码跳过
-        for key in credit_exhausted:
-            results[key] = None
+        print('=' * 50)
+        print('❌ 企查查积分余额不足，数据采集无法继续。')
+        print(f'   积分不足: {", ".join(credit_exhausted)}（{len(credit_exhausted)}/{total_tools} 个工具）')
+        print(f'   建议: 充值企查查积分或使用会员账号后重新运行')
+        print('=' * 50)
+        sys.exit(4)
 
     # ---- Chapter 1: 客户核心画像 ----
     ch1 = data['chapters']['chapter1']
