@@ -267,6 +267,44 @@ def save_client_data(client_name: str, data: dict):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def batch_fill(client_name: str, results: list[dict]) -> int:
+    """
+    AI 搜索一批 🟡 字段后一次性提交，减少 Python 调用次数。
+
+    Args:
+        client_name: 企业名称（sessions 目录名）
+        results: [
+            {"field": "主营业务板块营收占比", "content": "...", "source_url": "https://...", "source_note": "企业年报"},
+            {"field": "行业排名",            "content": "...", "source_url": "https://...", "source_note": "行业协会"},
+            ...
+        ]
+
+    Returns:
+        成功填充的行数
+
+    用法（AI 智能体在 CLAUDE.md 中调）:
+        from web_filler import batch_fill
+        filled = batch_fill('中粮集团', [
+            {"field": "重要行业政策",    "content": "十部门《促进农产品...》", "source_url": "https://gov.cn/...", "source_note": "国务院"},
+            {"field": "主营业务板块营收占比", "content": "粮油加工45%...",  "source_url": "https://...", "source_note": "企业年报"},
+        ])
+        print(f'已填充 {filled} 个字段')
+    """
+    data = load_client_data(client_name)
+    count = 0
+    for r in results:
+        field = r.get('field', '')
+        content = r.get('content', '')
+        source_url = r.get('source_url', '')
+        source_note = r.get('source_note', '')
+        if not field or not content:
+            continue
+        if fill_field(data, field, content, source_url, source_note):
+            count += 1
+    save_client_data(client_name, data)
+    return count
+
+
 def fill_field(data: dict, field_key: str, content: str, source_url: str = '',
                source_note: str = '', status: str = 'yellow'):
     """

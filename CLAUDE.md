@@ -1,31 +1,24 @@
 # 集团客户合作策略报告生成系统
 
-你是一个银行对公客户经理的 AI 助手。你的任务是根据用户要求，为指定企业集团生成合作策略报告。
+你是一个银行对公客户经理的 AI 助手。根据用户要求，为指定企业集团生成合作策略报告。
 
-## 首次使用：自主安装
-
-当你（AI 智能体）第一次在这个项目中遇到本 Skill 时，运行环境医生：
+## 首次使用：一键安装
 
 ```bash
 cd group-client-strategy
 python install.py
 ```
 
-`install.py` 会**自动完成**：
-1. 安装缺失的核心依赖（requests, openpyxl）— 使用 `--only-binary` 避免编译失败
-2. 安装核心依赖 (requests + openpyxl)
-3. 验证文件完整性
-4. 检查 QCC OAuth 授权状态
-5. 验证数据管线能正常加载
+`install.py` 自动完成：
+1. 安装依赖（requests, openpyxl）
+2. 验证文件完整性
+3. 检查 QCC OAuth 授权状态
 
-如果 `install.py` 提示 QCC OAuth 未授权，告诉用户运行 `python oauth_qcc.py auth` 完成授权。
+如果提示 QCC 未授权，运行以下命令完成授权（自动打开浏览器，120 秒内完成）：
 
-如果 pip 安装报编译错误（常见于 Windows ARM64），install.py 已内置 `--only-binary :all:` 策略，会自动跳过源码编译。如果依然失败，告诉用户手动运行：
+```bash
+python oauth_qcc.py auth
 ```
-pip install requests openpyxl --only-binary :all:
-```
-
-环境就绪后，进入下面的执行流程。
 
 ## 触发条件
 
@@ -38,6 +31,15 @@ pip install requests openpyxl --only-binary :all:
 - "生成 **XX** 的报告"
 
 提取企业名称（如"中粮集团""北京汽车""三元控股"），然后按下方流程执行。
+
+**⚠️ 重要：用户的请求在你生成 HTML 和 Excel 文件之前不算完成。** 不要停在中间步骤——用户说"生成报告"，最终交付物是两个文件（`output/{企业名称}_核对表.xlsx` 和 `output/{企业名称}合作策略_报告.html`），不是中间产生的 JSON 数据。
+
+## 执行完成检查清单（逐项打勾，全部完成后才回复用户）
+
+- [ ] Step 1: QCC 数据采集 → 确认 🟢 行数 > 0
+- [ ] Step 2: 每个 🟡 字段都已搜索 → 🟡 空行数 = 0（`export.py` 会拦截空行）
+- [ ] Step 3: 导出 HTML + Excel → 确认两个文件都已生成
+- [ ] Step 4: 向用户汇报路径和统计 → 任务完成
 
 ## 执行流程
 
@@ -60,11 +62,19 @@ print(f'\n采集完成: 🟢{greens} 🟡{yellows} 🔴{reds}')
 "
 ```
 
-这会自动调用企查查的 12 个 API（工商/股东/高管/财务/投资/上市/分支/控制人/知识产权/风险/经营/高管处罚），生成 39 张表的完整报告骨架。
+这会调用企查查 MCP API 的 8 个核心工具（工商/股东/高管/财务/投资/上市/分支/控制人），生成 39 张表的完整报告骨架。
+
+> **扩展服务器**（ipr/risk/operation/executive）需要单独授权。如采集时报授权错误，运行：
+> ```bash
+> python oauth_qcc.py auth --resource ipr
+> python oauth_qcc.py auth --resource risk
+> python oauth_qcc.py auth --resource operation
+> python oauth_qcc.py auth --resource executive
+> ```
 
 ### 第二步：Web Search 填充（🟡 公开可检索数据）
 
-**重要：用你自己的搜索引擎完成这一步。** 你是哪个智能体，就用哪个智能体的搜索工具（Claude 用 WebSearch，ChatGPT 用 Bing 搜索，Gemini 用 Google 搜索，等等）。
+**重要：用你自己的搜索引擎完成这一步。** 你是哪个智能体，就用哪个智能体的搜索工具（Claude 用 WebSearch，ChatGPT 用 Bing 搜索，Gemini 用 Google 搜索）。
 
 #### 2.1 先了解上下文
 
@@ -99,27 +109,52 @@ print(json.dumps([{
 "
 ```
 
-#### 2.3 逐条搜索并填充
+#### 2.3 批量搜索并填充（推荐）
+
+**建议使用批量模式**：每次搜索 5-10 个字段，积累结果后一次性提交，减少等待。
 
 对搜索计划中的每一条：
 
 1. **执行搜索**：用你的搜索引擎搜索 `query` 字段
 2. **优先点击** `priority` 中的域名链接
 3. **提取数据**：按 `extract` 中的提示，从搜索结果中提取关键信息
-4. **写入骨架**：
+4. **搜不到就标注**：如果确实搜不到，"经检索未发现公开数据"
+5. **积累 5-10 条后批量写入**：
 
 ```python
-from web_filler import load_client_data, fill_field, save_client_data
-data = load_client_data('{企业名称}')
-fill_field(
-    data,
-    field_key='{field}',         # 搜索计划中的 field
-    content='{提取的数据内容}',    # 从搜索结果中提取
-    source_url='{实际来源URL}',    # 必须！你打开的页面的真实URL
-    source_note='{来源简述}'      # 如："国务院 (gov.cn)"
-)
-save_client_data('{企业名称}', data)
+from web_filler import batch_fill
+
+filled = batch_fill('{企业名称}', [
+    {
+        "field": "主营业务板块营收占比",
+        "content": "粮油加工 45%、食品饮料 30%...",
+        "source_url": "https://xxx.com/annual-report",
+        "source_note": "企业年报 (cofco.com)"
+    },
+    {
+        "field": "行业排名",
+        "content": "中国农副食品加工业第1位",
+        "source_url": "https://xxx.gov.cn/top500",
+        "source_note": "中国食品工业协会"
+    },
+    {
+        "field": "市场份额",
+        "content": "经检索未发现公开数据",
+        "source_url": "",
+        "source_note": ""
+    },
+    # ... 更多字段
+])
+print(f'✅ 已填充 {filled} 个字段')
 ```
+
+> 如果只剩少量字段，也可以用单条模式：
+> ```python
+> from web_filler import load_client_data, fill_field, save_client_data
+> data = load_client_data('{企业名称}')
+> fill_field(data, field_key='{field}', content='{提取的数据内容}', source_url='{实际来源URL}', source_note='{来源简述}')
+> save_client_data('{企业名称}', data)
+> ```
 
 **搜索原则：**
 - **政府/官方优先**：gov.cn > ndrc.gov.cn > sasac.gov.cn > 行业协会 > 企业官网 > 新闻
@@ -127,7 +162,9 @@ save_client_data('{企业名称}', data)
 - **绝不编造**：如果搜不到有效信息，那条就保持空 🟡，标注"经检索未发现公开数据"
 - **多搜几条**：关键信息建议搜索 2-3 次，用不同关键词交叉验证
 
-### 第三步：导出报告
+⚠️ **完成所有 🟡 字段搜索后，立即进入第三步导出报告，不要停下。**
+
+### 第三步：导出报告（必须执行，不可跳过）
 
 ```bash
 cd group-client-strategy
@@ -148,7 +185,7 @@ PYTHONIOENCODING=utf-8 python pipeline/export.py --client {企业名称} --readb
 ```
 
 这会：
-1. 读取 Excel 中用户修改的内容
+1. 按首列 Key 值匹配 JSON 行（同名 Key 按出现顺序依次匹配，不要修改首列 Key 值或增删行）
 2. 合并回 JSON
 3. 重新生成 HTML 报告（反映用户修改）
 
@@ -180,25 +217,32 @@ PYTHONIOENCODING=utf-8 python pipeline/export.py --client {企业名称} --readb
 
 ```
 group-client-strategy/
-├── CLAUDE.md              ← 本文件
-├── pipeline/export.py       ← 统一导出入口
+├── CLAUDE.md              ← 本文件（AI 智能体执行指引）
+├── README.md              ← 人类可读说明
+├── requirements.txt       ← Python 依赖
+├── install.py             ← 一键安装检查
+├── oauth_qcc.py           ← OAuth 2.0 授权（一键: python oauth_qcc.py auth）
+├── config.json            ← OAuth 配置（含 token，.gitignore 已排除）
 ├── pipeline/
-│   ├── qcc_client.py       ← 企查查 MCP 客户端
-│   ├── qcc_fetch.py        ← 🟢 数据采集 + 骨架
-│   ├── web_filler.py       ← 🟡 搜索计划 + fill_field()
-│   ├── excel_renderer.py   ← Excel 导出
-│   └── html_renderer.py    ← HTML 导出
-├── sessions/               ← 客户数据 JSON
-└── output/                 ← 生成的报告
+│   ├── qcc_client.py      ← 企查查 MCP 客户端（HTTP 直调，无需外部工具）
+│   ├── qcc_fetch.py       ← 🟢 数据采集编排 + 39 表骨架
+│   ├── web_filler.py      ← 🟡 搜索计划 + fill_field()
+│   ├── excel_renderer.py  ← Excel 导出（多 Sheet，三色底色）
+│   ├── excel_reader.py    ← Excel 回读合并（首列 Key 匹配）
+│   ├── html_renderer.py   ← HTML 报告渲染（公文格式）
+│   └── export.py          ← 统一 CLI 入口
+├── sessions/              ← 客户数据 JSON（按企业分目录）
+└── output/                ← 生成的报告（Excel + HTML）
 ```
 
 ## 注意事项
 
 - **首次使用前**需要完成企查查 OAuth 授权：`python oauth_qcc.py auth`
-- **QCC 采集失败**时，检查 OAuth token 是否过期：`python oauth_qcc.py test`
+- **Token 过期**时系统会自动刷新，无需手动操作
 - **搜索不到数据**时，保持 🟡 状态并标注"经检索未发现公开数据"，不要编造
 - **每家企业生成独立目录**：`sessions/{企业名称}/data.json`
 - **Excel 审核**：导出 Excel 后，用户在 Excel 中编辑 🔴 字段，保存后运行 `python pipeline/export.py --client {企业名称} --readback` 合并回 JSON 并重新生成 HTML
+- **Excel 回读匹配**：按首列 Key 值匹配行（如"信息项""指标"），同名 Key 按出现顺序依次匹配。不要修改首列 Key 值或增删行，否则匹配失败。
 
 ## 示例对话
 

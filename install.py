@@ -1,6 +1,9 @@
 """
 Group Client Strategy Report System - Environment Doctor
-Usage: python install.py
+========================================================
+一键安装检查 + 引导 OAuth 授权。
+
+用法: python install.py
 """
 
 import sys, os, subprocess, json
@@ -39,12 +42,12 @@ print('  Group Client Strategy Report - Environment Doctor')
 print('=' * 50)
 
 # 1. Python
-print('\n[1/5] Python')
+print('\n[1/4] Python')
 v = sys.version_info
 ok(f'Python {v.major}.{v.minor}.{v.micro}') if v >= (3, 10) else fail(f'Need 3.10+')
 
 # 2. Core deps (auto-install)
-print('\n[2/5] Dependencies')
+print('\n[2/4] Dependencies')
 for pkg, mod in [('requests', 'requests'), ('openpyxl', 'openpyxl')]:
     if check_module(mod):
         ok(pkg)
@@ -58,51 +61,70 @@ for pkg, mod in [('requests', 'requests'), ('openpyxl', 'openpyxl')]:
             print(f'       Manual: pip install {pkg} --only-binary :all:')
 
 # 3. Files
-print('\n[3/5] Files')
+print('\n[3/4] Files')
 for f in ['oauth_qcc.py', 'config.json', 'requirements.txt', 'CLAUDE.md']:
     ok(f) if (SKILL_DIR / f).exists() else fail(f'missing: {f}')
 for f in ['qcc_client.py', 'qcc_fetch.py', 'web_filler.py', 'excel_renderer.py', 'html_renderer.py', 'excel_reader.py', 'export.py']:
     ok(f'pipeline/{f}') if (PIPELINE_DIR / f).exists() else fail(f'missing: pipeline/{f}')
 
-# 4. QCC Auth
-print('\n[4/5] QCC OAuth')
+# 4. QCC OAuth
+print('\n[4/4] QCC OAuth')
 config_path = SKILL_DIR / 'config.json'
+authorized = False
 if config_path.exists():
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
-        if config.get('qcc_oauth', {}).get('access_token'):
-            ok('QCC OAuth authorized')
-        else:
-            warn('QCC not authorized -> python oauth_qcc.py auth')
-    except Exception:
-        warn('config.json parse error')
-else:
-    warn('config.json missing -> python oauth_qcc.py auth')
+        oauth = config.get('qcc_oauth', {})
 
-# 5. Pipeline
-print('\n[5/5] Pipeline')
+        # 新格式: qcc_oauth.company / 旧格式: qcc_oauth 本身是 token
+        if 'company' in oauth and 'access_token' in oauth['company']:
+            ok('QCC OAuth (company) — 已授权')
+            authorized = True
+        elif 'access_token' in oauth:
+            ok('QCC OAuth (company) — 已授权 [旧格式，将在首次使用时自动迁移]')
+            authorized = True
+        else:
+            warn('QCC OAuth 未授权')
+    except Exception:
+        warn('config.json 解析异常')
+else:
+    warn('config.json 缺失')
+
+if not authorized:
+    print()
+    print('  ╔══════════════════════════════════════════════════╗')
+    print('  ║  企查查数据采集需要 OAuth 授权。              ║')
+    print('  ║  请运行以下命令完成一键授权:                ║')
+    print('  ║                                              ║')
+    print('  ║    python oauth_qcc.py auth                 ║')
+    print('  ║                                              ║')
+    print('  ║  授权后即可开始采集企业数据。            ║')
+    print('  ╚══════════════════════════════════════════════════╝')
+
+# 5. Pipeline validation
+print()
+print('[验证] 数据管线')
 sys.path.insert(0, str(PIPELINE_DIR))
 try:
     from qcc_fetch import build_skeleton
     tables = sum(len(sec.get('tables',[])) for ch in build_skeleton('test').get('chapters',{}).values() for sec in ch.values())
-    ok(f'Pipeline normal ({tables} tables)')
+    ok(f'管线正常 ({tables} 张表)')
 except Exception as e:
-    fail(f'Pipeline load failed: {e}')
+    fail(f'管线加载失败: {e}')
 
 # Summary
 print()
 print('=' * 50)
 if not fail_list and not warn_list:
-    print(f'  All {len(ok_list)} checks passed!')
+    print(f'  ✅ 全部 {len(ok_list)} 项检查通过！')
 elif not fail_list:
-    print(f'  {len(ok_list)} passed, {len(warn_list)} warnings (non-blocking)')
+    print(f'  ✅ {len(ok_list)} 通过, {len(warn_list)} 提醒')
 else:
-    print(f'  {len(ok_list)} passed, {len(warn_list)} warnings, {len(fail_list)} FAILED')
+    print(f'  {len(ok_list)} 通过, {len(warn_list)} 提醒, {len(fail_list)} 失败')
 
 print()
-print('  Usage:')
-print('    python pipeline/export.py --client <name>        Export Excel + HTML')
-print('    python pipeline/export.py --client <name> --readback  Sync Excel back')
-print('    python oauth_qcc.py auth                         First-time OAuth')
+print('  快速开始:')
+print('    python oauth_qcc.py auth                  ← 首次使用先授权')
+print('    python pipeline/export.py --client <企业名>  ← 导出报告')
 print('=' * 50)

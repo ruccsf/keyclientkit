@@ -2,7 +2,8 @@
 报告导出 CLI — 统一入口
 ========================
 用法:
-  python pipeline/export.py --client 中粮集团              # 导出 Excel + HTML
+  python pipeline/export.py --client 中粮集团              # 导出 Excel + HTML（需要所有 🟡 字段已搜索）
+  python pipeline/export.py --client 中粮集团 --force       # 强制导出（跳过 🟡 字段检查）
   python pipeline/export.py --client 中粮集团 --readback    # 读回 Excel → 合并 JSON → 重生成 HTML
   python pipeline/export.py --client 中粮集团 --stats       # 查看统计
   python pipeline/export.py --client 中粮集团 --excel-only  # 仅 Excel
@@ -43,7 +44,53 @@ def print_stats(data: dict):
     print(f'  自动填充率: {(greens+yellows)*100//total}%')
 
 
-def cmd_export(client_name: str, excel_only=False, html_only=False) -> dict:
+def _find_content_column(row: dict) -> str:
+    """找到行的主内容列（排除键列、来源列、元数据列）"""
+    key_cols = {'信息项', '分析维度', '指标', '财务指标', '动向类别', '年份',
+                '债券类型', '需求类型', '维度', '产品类别', '风险类别', '准入方式',
+                '合作维度', '未覆盖业务领域', '短板类别', '目标维度', '拓展方向',
+                '序号', '接触类型', '角色', '银行', '职务', '子公司名称', '产品/服务',
+                '联动/创新类型', '对标维度', '准入方式', '年份', '准入方式'}
+    source_cols = {'备注/来源', '数据来源', '备注', '来源'}
+    candidates = ['内容', '核心内容', '具体内容', '付息负债总额(万元)',
+                  '发行金额(万元)', '余额(万元)', '方案描述', '风险点描述',
+                  '需求描述', '集团业务规模', '内容(含趋势对比)',
+                  '具体产品', '方案描述', '任务描述', '目标值']
+    for c in candidates:
+        if c in row:
+            return c
+    for c in row:
+        if not c.startswith('_') and c not in key_cols and c not in source_cols:
+            return c
+    return None
+
+
+def _check_yellow_fields(data: dict) -> int:
+    """
+    检查 🟡 字段是否都已处理。
+    返回未搜索的空 🟡 行数（已标注"经检索未发现"的不计入）。
+    """
+    empty_yellows = 0
+    total_yellows = 0
+    for ch_val in data.get('chapters', {}).values():
+        if not isinstance(ch_val, dict):
+            continue
+        for sec_val in ch_val.values():
+            if not isinstance(sec_val, dict):
+                continue
+            for tbl in sec_val.get('tables', []):
+                for row in tbl.get('data', []):
+                    if row.get('_status') != 'yellow':
+                        continue
+                    total_yellows += 1
+                    content_col = _find_content_column(row)
+                    content = str(row.get(content_col, '')).strip() if content_col else ''
+                    if not content:
+                        empty_yellows += 1
+    return empty_yellows, total_yellows
+
+
+def cmd_export(client_name: str, excel_only=False, html_only=False, force=False) -> dict:
     """导出 Excel + HTML"""
     session_path = SESSIONS_DIR / client_name / 'data.json'
     if not session_path.exists():
@@ -53,6 +100,19 @@ def cmd_export(client_name: str, excel_only=False, html_only=False) -> dict:
 
     with open(session_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
+
+    # 🟡 字段检查：所有 yellow 字段必须已搜索（内容非空或已标注"经检索未发现"）
+    empty_yellows, total_yellows = _check_yellow_fields(data)
+    if empty_yellows > 0 and not force:
+        print()
+        print(f'❌ 还有 {empty_yellows}/{total_yellows} 个 🟡 字段未搜索')
+        print(f'   请先完成 Web 搜索填充（搜不到请标注"经检索未发现公开数据"）')
+        print(f'   强制导出: python pipeline/export.py --client {client_name} --force')
+        sys.exit(1)
+    elif empty_yellows > 0 and force:
+        print(f'⚠️  --force: 跳过 🟡 字段检查（{empty_yellows}/{total_yellows} 个未搜索）')
+    elif total_yellows > 0:
+        print(f'✅ 🟡 字段已全部搜索（{total_yellows} 行）')
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -123,6 +183,7 @@ if __name__ == '__main__':
     stats_only = False
     excel_only = False
     html_only = False
+    force = False
 
     for i, arg in enumerate(sys.argv[1:]):
         if arg == '--client' and i + 1 < len(sys.argv) - 1:
@@ -135,9 +196,11 @@ if __name__ == '__main__':
             excel_only = True
         elif arg == '--html-only':
             html_only = True
+        elif arg == '--force':
+            force = True
 
     if not client:
-        print('用法: python pipeline/export.py --client <企业名> [--readback|--stats|--excel-only|--html-only]')
+        print('用法: python pipeline/export.py --client <企业名> [--readback|--stats|--excel-only|--html-only|--force]')
         sys.exit(1)
 
     # Determine session folder
@@ -157,4 +220,4 @@ if __name__ == '__main__':
     elif readback:
         cmd_readback(client)
     else:
-        cmd_export(client, excel_only=excel_only, html_only=html_only)
+        cmd_export(client, excel_only=excel_only, html_only=html_only, force=force)

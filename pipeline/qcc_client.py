@@ -1,12 +1,11 @@
 """
 企查查 MCP 调用客户端
 ====================
-通过 mcporter 调用企查查 MCP 工具，获取企业工商数据。
+直接通过 HTTP 调用企查查 MCP 端点，使用 OAuth 2.0 Bearer Token 认证。
+不再依赖 mcporter（Node.js CLI），纯 Python 实现。
 
 前置条件:
-  1. mcporter 已安装（npm i -g mcporter）
-  2. 企查查 MCP 已注册: mcporter config add qcc-company https://agent.qcc.com/mcp/company/stream
-  3. OAuth 已授权: mcporter auth qcc-company
+  python oauth_qcc.py auth   # 首次使用完成 OAuth 授权（一键命令）
 
 用法:
   from qcc_client import QccClient
@@ -14,136 +13,315 @@
   info = client.get_company_registration_info("中粮集团有限公司")
 """
 
-import subprocess, json, os, sys
+import json, re, os, sys, time
 from pathlib import Path
 from datetime import datetime
 
-MCPORTER = r"C:\Users\OseasyVM\AppData\Roaming\npm\mcporter.cmd"
+import requests
 
-# 可用的 QCC MCP 服务器
-QCC_SERVERS = {
-    'company':    'qcc-company',     # 工商/股东/高管/财务/投资/上市/分支/控制人
-    'executive':  'qcc-executive',   # 高管个人处罚/受益所有人
-    'history':    'qcc-history',     # 历史信息（需单独授权）
-    'risk':       'qcc-risk',        # 行政处罚/破产重整
-    'ipr':        'qcc-ipr',         # 知识产权（APP/特许经营/著作权/专利等）
-    'operation':  'qcc-operation',   # 行政许可/广告审查/资产拍卖等
+# ---- QCC MCP 端点 ----
+QCC_ENDPOINTS = {
+    'company':    'https://agent.qcc.com/mcp/company/stream',
+    'ipr':        'https://agent.qcc.com/mcp/ipr/stream',
+    'risk':       'https://agent.qcc.com/mcp/risk/stream',
+    'operation':  'https://agent.qcc.com/mcp/operation/stream',
+    'executive':  'https://agent.qcc.com/mcp/executive/stream',
 }
-SERVER = QCC_SERVERS['company']  # 向后兼容
 
-def _call_qcc_server(server: str, tool_name: str, args: dict, timeout: int = 30) -> dict:
-    """底层调用：mcporter call <server> <tool> --args <json>"""
-    args_json = json.dumps(args, ensure_ascii=False)
-    cmd = [MCPORTER, "call", server, tool_name, "--args", args_json]
+SKILL_DIR = Path(__file__).parent.parent
+CONFIG_PATH = SKILL_DIR / 'config.json'
 
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, encoding='utf-8',
-            timeout=timeout,
-            env={**os.environ, 'PYTHONIOENCODING': 'utf-8'},
-        )
-    except subprocess.TimeoutExpired:
-        raise QccCallError(f'{tool_name}: 调用超时 ({timeout}s)')
-    except FileNotFoundError:
-        raise QccCallError(f'mcporter 未找到: {MCPORTER}。请先安装: npm i -g mcporter')
-
-    output = (result.stdout or '') + (result.stderr or '')
-
-    if 'auth required' in output.lower() or 'unauthorized' in output.lower():
-        raise QccAuthError(f'QCC {server} 未授权。请运行: mcporter auth {server}')
-
-    if 'unknown mcp server' in output.lower():
-        raise QccCallError(f'QCC {server} 未注册到 mcporter。')
-
-    if result.returncode != 0:
-        raise QccCallError(f'{tool_name}: mcporter 返回错误码 {result.returncode}\n{output[:500]}')
-
-    if result.stdout:
-        try:
-            return json.loads(result.stdout)
-        except json.JSONDecodeError:
-            return {"_raw": result.stdout.strip()}
-    return {}
-
-
+# ---- 异常 ----
 class QccAuthError(Exception):
     """企查查未授权"""
     pass
-
 
 class QccCallError(Exception):
     """企查查调用失败"""
     pass
 
 
-def _call_qcc(tool_name: str, args: dict, timeout: int = 30) -> dict:
-    """
-    底层调用：mcporter call qcc-company <tool> --args <json>
-    返回解析后的 dict
-    """
-    args_json = json.dumps(args, ensure_ascii=False)
+# ---- Token 管理（多服务器支持）----
+# config.json 格式:
+#   { "qcc_oauth": { "company": {access_token, refresh_token, ...}, "ipr": {...}, ... } }
+#   或旧格式:      { "qcc_oauth": { access_token, refresh_token, ... } }  ← 视为 company
+#
+# 每个 QCC MCP 服务器需要独立授权（token 绑定到特定 resource URL）。
+# 首次使用只需授权 company 服务器（覆盖 80% 数据），扩展服务器按需授权。
 
-    # 直接用 mcporter.cmd 作为可执行文件（不用 cmd /c，避免中文编码损坏）
-    cmd = [MCPORTER, "call", SERVER, tool_name, "--args", args_json]
+_token_cache = {}       # {server: token_string}
+_token_cache_time = {}  # {server: timestamp}
+_TOKEN_CACHE_TTL = 60   # 缓存 1 分钟
 
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, encoding='utf-8',
-            timeout=timeout,
-            env={**os.environ, 'PYTHONIOENCODING': 'utf-8'},
-        )
-    except subprocess.TimeoutExpired:
-        raise QccCallError(f'{tool_name}: 调用超时 ({timeout}s)')
-    except FileNotFoundError:
-        raise QccCallError(f'mcporter 未找到: {MCPORTER}。请先安装: npm i -g mcporter')
 
-    # 合并 stdout + stderr
-    output = (result.stdout or '') + (result.stderr or '')
-
-    # 检测未授权
-    if 'auth required' in output.lower() or 'unauthorized' in output.lower():
+def _load_config() -> dict:
+    if not CONFIG_PATH.exists():
         raise QccAuthError(
-            f'企查查 MCP 未授权。请运行:\n'
-            f'  mcporter auth {SERVER}\n'
-            f'然后重新运行此命令。'
+            '未找到 config.json。\n'
+            '请先运行: python oauth_qcc.py auth'
         )
+    with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+        return json.load(f)
 
-    # 检测未知服务器
-    if 'unknown mcp server' in output.lower():
-        raise QccCallError(
-            f'企查查 MCP 未注册到 mcporter。请运行:\n'
-            f'  mcporter config add {SERVER} https://agent.qcc.com/mcp/company/stream\n'
-            f'  mcporter auth {SERVER}'
-        )
 
-    if result.returncode != 0:
-        raise QccCallError(f'{tool_name}: mcporter 返回错误码 {result.returncode}\n{output[:500]}')
+def _save_config(config: dict):
+    with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
 
-    # 尝试解析 JSON
-    if result.stdout:
-        try:
-            return json.loads(result.stdout)
-        except json.JSONDecodeError:
-            return {"_raw": result.stdout.strip()}
+
+def _get_server_token_info(server: str) -> dict:
+    """
+    从 config.json 中提取指定服务器的 token 信息。
+    兼容旧格式（单 token → 视为 company）。
+    """
+    config = _load_config()
+    oauth = config.get('qcc_oauth', {})
+
+    # 新格式: qcc_oauth.company / qcc_oauth.ipr / ...
+    if server in oauth and isinstance(oauth[server], dict) and 'access_token' in oauth[server]:
+        return oauth[server]
+
+    # 旧格式: qcc_oauth 本身是 token dict → 视为 company
+    if 'access_token' in oauth:
+        if server == 'company':
+            return oauth
+        # 其他服务器不能用 company token
+        return {}
+
     return {}
 
 
+def _save_server_token_info(server: str, token_info: dict):
+    """保存指定服务器的 token 信息"""
+    config = _load_config()
+    if 'qcc_oauth' not in config:
+        config['qcc_oauth'] = {}
+
+    # 如果 qcc_oauth 本身是旧格式的 token dict，先迁移
+    oauth = config['qcc_oauth']
+    if 'access_token' in oauth:
+        # 迁移: 旧 token → qcc_oauth.company
+        config['qcc_oauth'] = {'company': oauth}
+
+    config['qcc_oauth'][server] = token_info
+    _save_config(config)
+
+
+def get_bearer_token(server: str = 'company') -> str:
+    """
+    获取指定服务器的有效 Bearer token。支持自动刷新。
+
+    Args:
+        server: QCC 服务器名（company/ipr/risk/operation/executive）
+    Returns:
+        Bearer token string
+    Raises:
+        QccAuthError: 该服务器未授权
+    """
+    global _token_cache, _token_cache_time
+
+    if server in _token_cache and time.time() - _token_cache_time.get(server, 0) < _TOKEN_CACHE_TTL:
+        return _token_cache[server]
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    from oauth_qcc import refresh_access_token, QCC_RESOURCES
+
+    token_info = _get_server_token_info(server)
+    access_token = token_info.get('access_token', '')
+    refresh_token_val = token_info.get('refresh_token', '')
+    client_id = token_info.get('client_id', '')
+    obtained_at = token_info.get('_obtained_at', 0)
+    expires_in = token_info.get('expires_in', 3600)
+    redirect_uri = token_info.get('redirect_uri', '')
+
+    if not access_token:
+        if server == 'company':
+            raise QccAuthError()
+        else:
+            raise QccAuthError(
+                f'企查查 {server} 服务器未授权。请运行:\n'
+                f'  python oauth_qcc.py auth --resource {server}'
+            )
+
+    # 有效且未过期 → 直接返回
+    if obtained_at and time.time() < obtained_at + expires_in - 300:
+        _token_cache[server] = access_token
+        _token_cache_time[server] = time.time()
+        return access_token
+
+    # 尝试刷新
+    if refresh_token_val and client_id:
+        try:
+            resource = QCC_RESOURCES.get(server, QCC_RESOURCES['company'])
+            new_tokens = refresh_access_token(client_id, refresh_token_val, resource)
+            new_tokens['client_id'] = client_id
+            new_tokens['redirect_uri'] = redirect_uri
+            _save_server_token_info(server, new_tokens)
+
+            _token_cache[server] = new_tokens['access_token']
+            _token_cache_time[server] = time.time()
+            return _token_cache[server]
+        except Exception:
+            pass
+
+    # 返回旧 token（可能已过期但值得一试）
+    _token_cache[server] = access_token
+    _token_cache_time[server] = time.time()
+    return access_token
+
+
+def clear_token_cache(server: str = None):
+    """清除 token 缓存"""
+    global _token_cache, _token_cache_time
+    if server:
+        _token_cache.pop(server, None)
+        _token_cache_time.pop(server, None)
+    else:
+        _token_cache = {}
+        _token_cache_time = {}
+
+
+# ---- MCP 协议调用 ----
+
+def _parse_sse_response(response_bytes: bytes) -> dict:
+    """
+    解析 QCC MCP 的 SSE 响应。
+    格式: event: message\n data: <json-rpc-response>\n\n
+    """
+    text = response_bytes.decode('utf-8')
+    m = re.search(r'data:\s*(\{.*\})', text, re.DOTALL)
+    if m:
+        return json.loads(m.group(1))
+    # 尝试直接 JSON 解析（某些响应可能不是 SSE）
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {'_raw': text[:500]}
+
+
+def _call_mcp_server(server: str, tool_name: str, args: dict, timeout: int = 30) -> dict:
+    """
+    直接 HTTP 调用 QCC MCP 端点。
+    MCP Streamable HTTP 协议: POST JSON-RPC → SSE 响应。
+
+    Args:
+        server: QCC 服务器名（company/ipr/risk/operation/executive）
+        tool_name: MCP tool 名（如 get_company_registration_info）
+        args: tool 参数（如 {'searchKey': '中粮集团有限公司'}）
+        timeout: 超时秒数
+
+    Returns:
+        解析后的工具返回数据（dict）
+
+    Raises:
+        QccAuthError: 未授权
+        QccCallError: 调用失败
+    """
+    endpoint = QCC_ENDPOINTS.get(server)
+    if not endpoint:
+        raise QccCallError(f'未知的 QCC MCP 服务器: {server}（可选: {", ".join(QCC_ENDPOINTS.keys())}）')
+
+    # 获取 token（按服务器隔离，自动刷新）
+    try:
+        token = get_bearer_token(server)
+    except QccAuthError:
+        # 重新抛出，保留 server 信息（已在 get_bearer_token 中设置消息）
+        raise
+
+    rpc = {
+        'jsonrpc': '2.0',
+        'method': 'tools/call',
+        'params': {
+            'name': tool_name,
+            'arguments': args,
+        },
+        'id': 1,
+    }
+
+    try:
+        resp = requests.post(
+            endpoint,
+            json=rpc,
+            headers={
+                'Authorization': f'Bearer {token}',
+                'Content-Type': 'application/json',
+                'Accept': 'text/event-stream, application/json',
+            },
+            timeout=timeout,
+        )
+    except requests.Timeout:
+        raise QccCallError(f'{tool_name}: 调用超时 ({timeout}s)')
+    except requests.ConnectionError as e:
+        raise QccCallError(f'{tool_name}: 连接失败 — {e}')
+
+    # Auth 错误
+    if resp.status_code == 401:
+        clear_token_cache(server)
+        if server == 'company':
+            raise QccAuthError(
+                f'企查查 company token 无效。请运行:\n'
+                f'  python oauth_qcc.py auth'
+            )
+        else:
+            raise QccAuthError(
+                f'企查查 {server} token 无效。请运行:\n'
+                f'  python oauth_qcc.py auth --resource {server}'
+            )
+
+    if resp.status_code != 200:
+        raise QccCallError(
+            f'{tool_name}: HTTP {resp.status_code}\n{resp.text[:500]}'
+        )
+
+    # 解析 SSE 响应
+    result = _parse_sse_response(resp.content)
+
+    # JSON-RPC 错误
+    if 'error' in result:
+        err = result['error']
+        msg = err.get('message', str(err))
+        # 某些 "错误" 实际上是正常的（如"未发现记录"）
+        if '未发现' in msg or '未匹配' in msg:
+            return {'搜索结果': msg}
+        raise QccCallError(f'{tool_name}: {msg}')
+
+    # 提取 content → text → JSON
+    r = result.get('result', {})
+    content = r.get('content', [])
+    if content:
+        text = content[0].get('text', '')
+        if text:
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return {'_raw_text': text}
+
+    return r
+
+
+# 向后兼容的顶层函数
+def _call_qcc(tool_name: str, args: dict, timeout: int = 30) -> dict:
+    """（已弃用）向后兼容。请使用 QccClient 实例方法。"""
+    return _call_mcp_server('company', tool_name, args, timeout)
+
+
 # ============================================================
-# 高级 API：每个 MCP 工具一个函数
+# QccClient — 企查查 company 服务器（8 个核心工具）
 # ============================================================
 
 class QccClient:
-    """企查查 MCP 客户端"""
+    """企查查 MCP 客户端（company 服务器：工商/股东/高管/财务/投资/上市/分支/控制人）"""
 
     def __init__(self):
+        self.server = 'company'
         self.call_log = []
 
     def _call(self, tool: str, args: dict, timeout: int = 30) -> dict:
-        result = _call_qcc(tool, args, timeout)
+        result = _call_mcp_server(self.server, tool, args, timeout)
         self.call_log.append({
             'tool': tool, 'args': args,
             'time': datetime.now().strftime('%H:%M:%S'),
-            'ok': '_raw' not in result and 'error' not in str(result).lower()[:100]
+            'ok': '_raw' not in result and '_raw_text' not in result
         })
         return result
 
@@ -154,11 +332,11 @@ class QccClient:
         return self._call('get_company_profile', {'searchKey': name})
 
     def get_company_registration_info(self, name: str) -> dict:
-        """核心工商登记信息（13个字段）"""
+        """核心工商登记信息（13 个字段）"""
         return self._call('get_company_registration_info', {'searchKey': name})
 
     def verify_company_accuracy(self, credit_code: str, name: str) -> dict:
-        """核实企业名称与信用代码是否匹配（searchKey=信用代码, name=企业名称）"""
+        """核实企业名称与信用代码是否匹配"""
         return self._call('verify_company_accuracy', {'searchKey': credit_code, 'name': name})
 
     def get_company_by_query(self, keyword: str) -> dict:
@@ -229,10 +407,7 @@ class QccClient:
     # ---- 便捷方法 ----
 
     def get_basic_snapshot(self, name: str) -> dict:
-        """
-        一站式基础快照：工商信息 + 股东 + 高管
-        适合快速了解企业基本面
-        """
+        """一站式基础快照：工商信息 + 股东 + 高管"""
         results = {}
         for tool, method in [
             ('registration', self.get_company_registration_info),
@@ -248,10 +423,7 @@ class QccClient:
         return results
 
     def get_full_report(self, name: str) -> dict:
-        """
-        完整尽调：所有可用维度
-        返回包含 10+ 维度的企业全景数据
-        """
+        """完整尽调：所有可用维度"""
         results = {}
         tools = [
             ('profile', self.get_company_profile),
@@ -266,7 +438,6 @@ class QccClient:
             ('branches', self.get_branches),
             ('change_records', self.get_change_records),
         ]
-
         for key, method in tools:
             try:
                 results[key] = method(name)
@@ -274,35 +445,44 @@ class QccClient:
                 raise
             except Exception as e:
                 results[key] = {'error': str(e)}
-
         return results
 
 
 # ============================================================
-# 扩展 API：知识产权 / 风险 / 经营 / 高管
+# 扩展客户端基类
 # ============================================================
 
-class QccIprClient:
-    """企查查知识产权 MCP 客户端（qcc-ipr）"""
-    def __init__(self):
-        self.server = QCC_SERVERS['ipr']
+class _QccExtensionClient:
+    """扩展 MCP 服务器的基类（ipr/risk/operation/executive）"""
+
+    def __init__(self, server: str):
+        if server not in QCC_ENDPOINTS:
+            raise QccCallError(f'未知 QCC 服务器: {server}')
+        self.server = server
         self.call_log = []
 
     def _call(self, tool: str, args: dict, timeout: int = 30) -> dict:
-        result = _call_qcc_server(self.server, tool, args, timeout)
-        self.call_log.append({'tool': tool, 'args': args, 'time': datetime.now().strftime('%H:%M:%S')})
+        result = _call_mcp_server(self.server, tool, args, timeout)
+        self.call_log.append({
+            'tool': tool, 'args': args,
+            'time': datetime.now().strftime('%H:%M:%S'),
+            'ok': '_raw' not in result and '_raw_text' not in result
+        })
         return result
 
+
+class QccIprClient(_QccExtensionClient):
+    """企查查知识产权 MCP 客户端（qcc-ipr）"""
+    def __init__(self):
+        super().__init__('ipr')
+
     def get_app_info(self, name: str) -> dict:
-        """企业APP信息"""
         return self._call('get_app_info', {'searchKey': name})
 
     def get_commercial_franchise(self, name: str) -> dict:
-        """商业特许经营备案"""
         return self._call('get_commercial_franchise', {'searchKey': name})
 
     def get_all_ipr(self, name: str) -> dict:
-        """获取所有知识产权相关信息"""
         results = {}
         for tool, method in [
             ('app_info', self.get_app_info),
@@ -315,35 +495,26 @@ class QccIprClient:
         return results
 
 
-class QccRiskClient:
+class QccRiskClient(_QccExtensionClient):
     """企查查风险信息 MCP 客户端（qcc-risk）"""
     def __init__(self):
-        self.server = QCC_SERVERS['risk']
-        self.call_log = []
-
-    def _call(self, tool: str, args: dict, timeout: int = 30) -> dict:
-        result = _call_qcc_server(self.server, tool, args, timeout)
-        self.call_log.append({'tool': tool, 'args': args, 'time': datetime.now().strftime('%H:%M:%S')})
-        return result
+        super().__init__('risk')
 
     def get_administrative_penalty(self, name: str, date_from: str = None) -> dict:
-        """行政处罚记录"""
         args = {'searchKey': name}
         if date_from:
             args['date_from'] = date_from
         return self._call('get_administrative_penalty', args)
 
     def get_bankruptcy_reorganization(self, name: str) -> dict:
-        """破产重整信息"""
         return self._call('get_bankruptcy_reorganization', {'searchKey': name})
 
     def get_all_risks(self, name: str) -> dict:
-        """获取所有风险相关信息"""
-        results = {}
         from datetime import timedelta
         three_years_ago = (datetime.now() - timedelta(days=365*3)).strftime('%Y-%m-%d')
+        results = {}
         for tool, method in [
-            ('administrative_penalty', lambda n: self.get_administrative_penalty(n, three_years_ago)),
+            ('administrative_penalty', lambda n=name: self.get_administrative_penalty(n, three_years_ago)),
             ('bankruptcy', self.get_bankruptcy_reorganization),
         ]:
             try:
@@ -353,27 +524,18 @@ class QccRiskClient:
         return results
 
 
-class QccOperationClient:
+class QccOperationClient(_QccExtensionClient):
     """企查查经营动态 MCP 客户端（qcc-operation）"""
     def __init__(self):
-        self.server = QCC_SERVERS['operation']
-        self.call_log = []
-
-    def _call(self, tool: str, args: dict, timeout: int = 30) -> dict:
-        result = _call_qcc_server(self.server, tool, args, timeout)
-        self.call_log.append({'tool': tool, 'args': args, 'time': datetime.now().strftime('%H:%M:%S')})
-        return result
+        super().__init__('operation')
 
     def get_administrative_license(self, name: str) -> dict:
-        """行政许可信息"""
         return self._call('get_administrative_license', {'searchKey': name})
 
     def get_advertising_review(self, name: str) -> dict:
-        """广告审查信息"""
         return self._call('get_advertising_review', {'searchKey': name})
 
     def get_all_operations(self, name: str) -> dict:
-        """获取所有经营动态"""
         results = {}
         for tool, method in [
             ('administrative_license', self.get_administrative_license),
@@ -386,42 +548,41 @@ class QccOperationClient:
         return results
 
 
-class QccExecutiveClient:
+class QccExecutiveClient(_QccExtensionClient):
     """企查查高管 MCP 客户端（qcc-executive）"""
     def __init__(self):
-        self.server = QCC_SERVERS['executive']
-        self.call_log = []
-
-    def _call(self, tool: str, args: dict, timeout: int = 30) -> dict:
-        result = _call_qcc_server(self.server, tool, args, timeout)
-        self.call_log.append({'tool': tool, 'args': args, 'time': datetime.now().strftime('%H:%M:%S')})
-        return result
+        super().__init__('executive')
 
     def get_executive_admin_penalty(self, company_name: str, person_name: str) -> dict:
-        """高管个人行政处罚"""
-        return self._call('get_executive_admin_penalty', {'searchKey': company_name, 'personName': person_name})
+        return self._call('get_executive_admin_penalty',
+                         {'searchKey': company_name, 'personName': person_name})
 
     def get_executive_beneficial_owner(self, company_name: str, person_name: str) -> dict:
-        """高管受益所有人"""
-        return self._call('get_executive_beneficial_owner', {'searchKey': company_name, 'personName': person_name})
+        return self._call('get_executive_beneficial_owner',
+                         {'searchKey': company_name, 'personName': person_name})
 
     def get_all_executive_info(self, company_name: str, personnel: list[dict]) -> dict:
-        """获取所有高管相关信息"""
         results = {}
-        for person in (personnel or [])[:3]:  # 最多查3个关键高管
+        for person in (personnel or [])[:3]:
             name = person.get('姓名', '')
             if name:
-                for tool, method in [
+                for tool_key, method in [
                     ('admin_penalty', lambda n=name: self.get_executive_admin_penalty(company_name, n)),
                     ('beneficial_owner', lambda n=name: self.get_executive_beneficial_owner(company_name, n)),
                 ]:
                     try:
-                        key = f'{name}_{tool}'
+                        key = f'{name}_{tool_key}'
                         results[key] = method()
                     except Exception as e:
                         results[key] = {'error': str(e)}
         return results
+
+
+# ============================================================
+# CLI 测试
+# ============================================================
 if __name__ == '__main__':
+    import sys
     sys.stdout.reconfigure(encoding='utf-8')
 
     if len(sys.argv) < 2:
@@ -429,9 +590,7 @@ if __name__ == '__main__':
         print('工具: profile | registration | shareholders | controller | personnel')
         print('      investments | finance | listing | branches | full')
         print('')
-        print('前置条件:')
-        print('  1. mcporter config add qcc-company https://agent.qcc.com/mcp/company/stream')
-        print('  2. mcporter auth qcc-company')
+        print('前置条件: python oauth_qcc.py auth')
         sys.exit(1)
 
     company = sys.argv[1]
