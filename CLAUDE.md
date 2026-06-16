@@ -5,7 +5,7 @@
 ## 首次使用：一键安装
 
 ```bash
-cd group-client-strategy
+cd keyclientkit
 python install.py
 ```
 
@@ -46,7 +46,7 @@ python oauth_qcc.py auth
 ### 第一步：QCC 数据采集（🟢 公开数据）
 
 ```bash
-cd group-client-strategy
+cd keyclientkit
 PYTHONIOENCODING=utf-8 python -c "
 import sys; sys.path.insert(0, 'pipeline')
 from qcc_fetch import fetch_qcc_data
@@ -167,7 +167,7 @@ print(f'✅ 已填充 {filled} 个字段')
 ### 第三步：导出报告（必须执行，不可跳过）
 
 ```bash
-cd group-client-strategy
+cd keyclientkit
 PYTHONIOENCODING=utf-8 python pipeline/export.py --client {企业名称}
 ```
 
@@ -180,7 +180,7 @@ PYTHONIOENCODING=utf-8 python pipeline/export.py --client {企业名称}
 用户打开 Excel 核对表，填写 🔴 字段，保存。然后运行：
 
 ```bash
-cd group-client-strategy
+cd keyclientkit
 PYTHONIOENCODING=utf-8 python pipeline/export.py --client {企业名称} --readback
 ```
 
@@ -216,7 +216,7 @@ PYTHONIOENCODING=utf-8 python pipeline/export.py --client {企业名称} --readb
 ## 目录结构
 
 ```
-group-client-strategy/
+keyclientkit/
 ├── CLAUDE.md              ← 本文件（AI 智能体执行指引）
 ├── README.md              ← 人类可读说明
 ├── requirements.txt       ← Python 依赖

@@ -40,7 +40,7 @@ python pipeline/export.py --client <企业名称>
 ## 目录结构
 
 ```
-group-client-strategy/
+keyclientkit/
 ├── README.md              ← 本文件
 ├── CLAUDE.md              ← AI 智能体执行指引
 ├── requirements.txt       ← Python 依赖（仅 requests + openpyxl）
@@ -67,7 +67,7 @@ group-client-strategy/
 2. 使用内置搜索引擎填充 🟡 字段（政府网站优先，标注来源 URL）
 3. 生成 Excel + HTML 报告
 
-使用时：将整个 `group-client-strategy/` 文件夹复制到你的智能体项目中，AI 会自动读取 `CLAUDE.md` 并按指引执行。
+使用时：将整个 `keyclientkit/` 文件夹复制到你的智能体项目中，AI 会自动读取 `CLAUDE.md` 并按指引执行。
 
 ## OAuth 授权
 

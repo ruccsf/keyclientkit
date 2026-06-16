@@ -16,7 +16,7 @@
 ## 快速启动
 
 ```bash
-cd group-client-strategy
+cd keyclientkit
 pip install -r requirements.txt
 python oauth_qcc.py auth           # 首次使用：一键 OAuth 授权
 python pipeline/export.py --client <企业名>
