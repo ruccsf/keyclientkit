@@ -34,7 +34,8 @@ CONFIG_PATH = SKILL_DIR / 'config.json'
 # ---- 异常 ----
 class QccAuthError(Exception):
     """企查查未授权"""
-    pass
+    def __init__(self, msg=None):
+        super().__init__(msg or '企查查 OAuth 未授权。请运行: python oauth_qcc.py auth')
 
 class QccCallError(Exception):
     """企查查调用失败"""
