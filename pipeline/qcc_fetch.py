@@ -242,6 +242,15 @@ def map_listing_to_desc(listing: dict) -> str:
     if not listing:
         return ''
 
+    # 检测 QCC "未发现记录" 或无上市数据 → 返回空字符串
+    search_result = listing.get('搜索结果', '')
+    if '未发现' in str(search_result):
+        return ''
+    # 也检查其他常见空结果字段
+    for nil_key in ['未匹配项', '无匹配项']:
+        if nil_key in listing:
+            return ''
+
     # 可能的格式: {"上市信息": [...]} 或直接包含上市字段
     items = listing.get('上市信息', listing.get('data', []))
     if not items and isinstance(listing, dict):
@@ -250,7 +259,7 @@ def map_listing_to_desc(listing: dict) -> str:
             items = [listing]
 
     if not isinstance(items, list):
-        return _s(listing)[:300]
+        return ''
 
     parts = []
     for item in items[:5]:
@@ -261,7 +270,7 @@ def map_listing_to_desc(listing: dict) -> str:
             if code:
                 parts.append(f'{code} {name}（{exchange}）')
 
-    return '; '.join(parts) if parts else _s(listing)[:300]
+    return '; '.join(parts) if parts else ''
 
 
 # ============================================================
@@ -1322,13 +1331,35 @@ def fetch_qcc_data(client_name: str, tools_filter: list = None) -> dict:
         else:
             controller_desc = _s(raw_ctrl)[:200]
 
+    # 预先从财务原始数据提取营收/净利润（供经营情况表使用）
+    revenue_val = ''
+    profit_val = ''
+    if finance:
+        records = finance.get('财务数据信息', [])
+        if records:
+            # 取最近一期利润表数据
+            latest = records[0]
+            pl = latest.get('指标详情', {}).get('财务报表', {}).get('利润表', {})
+            revenue_val = _yuan_to_wan(pl.get('营业总收入', ''))
+            profit_val = _yuan_to_wan(pl.get('净利润', ''))
+
     ops_rows = ch1_sec1['tables'][3]['data']  # 经营情况表 skeleton
     for r in ops_rows:
         key = r['信息项']
-        if '营业收入' in key and finance:
-            pass  # will be filled by financial_data
-        elif '净利润' in key and finance:
-            pass
+        if '营业收入' in key:
+            if revenue_val:
+                r['内容'] = revenue_val
+                r['备注/来源'] = '企查查 API: get_financial_data'
+                r['_status'] = 'green'
+            else:
+                r['_status'] = 'yellow'
+        elif '净利润' in key:
+            if profit_val:
+                r['内容'] = profit_val
+                r['备注/来源'] = '企查查 API: get_financial_data'
+                r['_status'] = 'green'
+            else:
+                r['_status'] = 'yellow'
         elif '上市信息' in key:
             r['内容'] = listing_desc
             r['备注/来源'] = '企查查 API: get_listing_info' if listing_desc else '[非上市企业或无记录]'
