@@ -82,6 +82,15 @@ def get_search_plans(data: dict = None) -> list[SearchPlan]:
             target_table='经营情况《★》', target_row_key='市场份额'),
     ])
 
+    # === Ch1(1) 基础信息表 ===
+    plans.append(
+        SearchPlan('外部评级', '外部评级(主体/债项)',
+            queries=[f'{company} 主体评级 债项评级 信用评级'],
+            priority_domains=['chinamoney.com.cn'],
+            extract_hint='在中国货币网债券发行公告中查找主体评级和债项评级结果，摘取评级机构、评级等级、评级日期',
+            target_table='基础信息表《★》', target_row_key='外部评级'),
+    )
+
     # === Ch1(2) 行业分析 ===
     plans.extend([
         SearchPlan('重要行业政策', '重要行业政策',

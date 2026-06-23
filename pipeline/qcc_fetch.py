@@ -292,7 +292,7 @@ def map_registration_to_basic_info_v2(reg: dict, company_name: str) -> tuple:
                                           '备注/来源': source, '_status': 'green'},
         {'信息项': '成立年限',          '内容': '',   '备注/来源': source, '_status': 'green'},
         {'信息项': '行内评级',          '内容': '',   '备注/来源': '[内部系统]', '_status': 'red'},
-        {'信息项': '外部评级',          '内容': '',   '备注/来源': '[Web Search / 评级报告]', '_status': 'yellow'},
+        {'信息项': '外部评级',          '内容': '',   '备注/来源': '[Web Search / 评级报告] → 中国货币网-债券发行公告-债项/主体评级', '_status': 'yellow'},
     ]
 
     # 计算成立年限
@@ -374,8 +374,7 @@ def map_financial_to_table_v2(finance: dict) -> list[dict]:
             indicators.setdefault(k, {})[period] = _yuan_to_wan(v)
 
         bs = detail.get('财务报表', {}).get('资产负债表', {})
-        for k in ['资产合计', '负债合计', '所有者权益总计']:
-            v = bs.get(k, '')
+        for k, v in bs.items():
             indicators.setdefault(k, {})[period] = _yuan_to_wan(v)
 
         cf = detail.get('财务报表', {}).get('现金流量表', {})
@@ -390,36 +389,64 @@ def map_financial_to_table_v2(finance: dict) -> list[dict]:
                     val += '%'
                 indicators.setdefault(k, {})[period] = val
 
-    all_periods = sorted(set(p for v in indicators.values() for p in v.keys()), reverse=True)
+    # 计算付息负债 = 短期借款 + 长期借款 + 应付债券 + 一年内到期非流动负债
+    ib_keys = ['短期借款', '长期借款', '应付债券', '一年内到期非流动负债']
+    all_periods_for_ib = set()
+    for k in ib_keys:
+        if k in indicators:
+            all_periods_for_ib.update(indicators[k].keys())
+    for period in all_periods_for_ib:
+        total = 0.0
+        has_any = False
+        for k in ib_keys:
+            v = indicators.get(k, {}).get(period, '')
+            if v and v != '' and v != '-':
+                try:
+                    total += float(str(v).replace(',', '').replace('，', ''))
+                    has_any = True
+                except (ValueError, TypeError):
+                    pass
+        if has_any:
+            indicators.setdefault('付息负债', {})[period] = f'{total:,.0f}'
 
-    priority_keys = ['营业总收入', '利润总额', '净利润', '资产合计', '负债合计',
-                     '所有者权益总计', '经营活动产生的现金流', '资产负债率',
-                     '净利率', '毛利率', '流动比率', '速动比率']
+    all_periods = sorted(set(p for v in indicators.values() for p in v.keys()), reverse=True)
+    global_yrs = all_periods[:3]  # 全局参考年份（最近三年）
+
+    # 列头标签：上一年/近两年/前三年 + 对应年份数字
+    label_latest  = f'上一年-{global_yrs[0]}年' if len(global_yrs) > 0 else '上一年'
+    label_second  = f'近两年-{global_yrs[1]}年' if len(global_yrs) > 1 else '近两年'
+    label_third   = f'前三年-{global_yrs[2]}年' if len(global_yrs) > 2 else '前三年'
+
+    priority_keys = ['短期借款', '长期借款', '应付债券', '一年内到期非流动负债',
+                     '付息负债', '应付票据', '应收票据',
+                     '资产合计', '负债合计', '所有者权益总计',
+                     '营业总收入', '利润总额', '净利润',
+                     '经营活动产生的现金流',
+                     '资产负债率', '净利率', '毛利率', '流动比率', '速动比率']
 
     rows = []
     for key in priority_keys:
         if key in indicators:
             periods = indicators[key]
-            yrs = sorted(periods.keys(), reverse=True)
             row = {
                 '财务指标': key,
-                '上一年': periods.get(yrs[0], '') if len(yrs) > 0 else '',
-                '近两年': periods.get(yrs[1], '') if len(yrs) > 1 else '',
-                '前三年': periods.get(yrs[2], '') if len(yrs) > 2 else '',
+                label_latest: periods.get(global_yrs[0], '') if len(global_yrs) > 0 else '',
+                label_second: periods.get(global_yrs[1], '') if len(global_yrs) > 1 else '',
+                label_third:  periods.get(global_yrs[2], '') if len(global_yrs) > 2 else '',
                 '_status': 'green',
             }
             rows.append(row)
             del indicators[key]
 
     for key, periods in indicators.items():
-        yrs = sorted(periods.keys(), reverse=True)
-        rows.append({
+        row = {
             '财务指标': key,
-            '上一年': periods.get(yrs[0], '') if len(yrs) > 0 else '',
-            '近两年': periods.get(yrs[1], '') if len(yrs) > 1 else '',
-            '前三年': periods.get(yrs[2], '') if len(yrs) > 2 else '',
+            label_latest: periods.get(global_yrs[0], '') if len(global_yrs) > 0 else '',
+            label_second: periods.get(global_yrs[1], '') if len(global_yrs) > 1 else '',
+            label_third:  periods.get(global_yrs[2], '') if len(global_yrs) > 2 else '',
             '_status': 'green',
-        })
+        }
+        rows.append(row)
 
     return rows
 
@@ -523,7 +550,7 @@ def build_skeleton(client_name: str) -> dict:
                             {'信息项': '注册地/注册资本',    '内容': '', '备注/来源': '[QCC: registration]', '_status': 'green'},
                             {'信息项': '成立年限',          '内容': '', '备注/来源': '[QCC: registration]', '_status': 'green'},
                             {'信息项': '行内评级',          '内容': '', '备注/来源': '[内部系统]',          '_status': 'red'},
-                            {'信息项': '外部评级',          '内容': '', '备注/来源': '[Web Search / 评级报告]', '_status': 'yellow'},
+                            {'信息项': '外部评级',          '内容': '', '备注/来源': '[Web Search / 评级报告] → 中国货币网-债券发行公告-债项/主体评级', '_status': 'yellow'},
                         ],
                     },
                     {
