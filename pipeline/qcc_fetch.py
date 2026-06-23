@@ -354,10 +354,79 @@ def map_personnel_to_executives_v2(personnel: dict) -> list[dict]:
     return rows
 
 
-def map_financial_to_table_v2(finance: dict) -> list[dict]:
+def _extract_annual_report_bs(annual_reports: dict) -> dict:
+    """
+    从工商年报中提取资产负债表详细科目。
+    返回 {指标名: {报告期: 值}} 格式，可直接 merge 到 indicators。
+
+    工商年报响应结构（推测）:
+      {'年报列表': [{'报告年份': '2023', '资产总额': ..., '负债总额': ...,
+                    '资产负债表': {'短期借款': ..., '长期借款': ..., ...}}]}
+    实际字段名以 API 返回为准，这里做全量提取。
+    """
+    indicators = {}
+    if not annual_reports or not isinstance(annual_reports, dict):
+        return indicators
+
+    # 尝试多种可能的响应路径
+    report_list = (
+        annual_reports.get('年报列表', []) or
+        annual_reports.get('annualReports', []) or
+        annual_reports.get('data', []) or
+        annual_reports.get('records', [])
+    )
+    if not isinstance(report_list, list) or not report_list:
+        # 可能是单层 dict，尝试直接提取
+        report_list = [annual_reports]
+
+    for report in report_list:
+        if not isinstance(report, dict):
+            continue
+        # 报告期
+        period = _s(
+            report.get('报告年份', '') or
+            report.get('year', '') or
+            report.get('报告期', '') or
+            report.get('年度', '')
+        )
+        if not period:
+            continue
+        period = period.replace('年报', '').replace('年', '').strip()
+
+        # 查找资产负债表数据（可能在多个路径下）
+        bs_data = (
+            report.get('资产负债表', {}) or
+            report.get('balanceSheet', {}) or
+            report.get('资产负债信息', {}) or
+            report.get('财务数据', {}).get('资产负债表', {}) or
+            report.get('financialData', {}).get('balanceSheet', {}) or
+            {}
+        )
+        if not isinstance(bs_data, dict) or not bs_data:
+            # 资产负债表可能在 report 自身（扁平结构）
+            # 尝试提取看起来像财务科目的 key
+            bs_data = {k: v for k, v in report.items()
+                       if k not in ('报告年份', 'year', '报告期', '年度',
+                                    '资产负债表', '利润表', '现金流量表',
+                                    '年报列表', 'data', 'records')}
+
+        for k, v in bs_data.items():
+            if not k or k.startswith('_'):
+                continue
+            # 跳过非数字值
+            val = _s(v)
+            if not val:
+                continue
+            indicators.setdefault(k, {})[period] = val
+
+    return indicators
+
+
+def map_financial_to_table_v2(finance: dict, annual_reports: dict = None) -> list[dict]:
     """
     财务数据 V2 → 模板列结构: 财务指标 | 前三年 | 近两年 | 上一年
     当前 API 数据最多覆盖 3 年，映射为逐年列。
+    支持可选的工商年报数据补充资产负债表科目。
     """
     records = finance.get('财务数据信息', [])
     if not records:
@@ -388,6 +457,18 @@ def map_financial_to_table_v2(finance: dict) -> list[dict]:
                 if val.replace('.', '').replace('-', '').isdigit() and not val.endswith('%'):
                     val += '%'
                 indicators.setdefault(k, {})[period] = val
+
+    # ---- 工商年报补充资产负债表科目 ----
+    if annual_reports:
+        ar_indicators = _extract_annual_report_bs(annual_reports)
+        for k, periods in ar_indicators.items():
+            if k not in indicators:  # 只补充 finance 中没有的字段
+                indicators[k] = periods
+            else:
+                # 合并 period 数据（年报可能有更早年份）
+                for p, v in periods.items():
+                    if p not in indicators[k]:
+                        indicators[k][p] = v
 
     all_periods = sorted(set(p for v in indicators.values() for p in v.keys()), reverse=True)
     global_yrs = all_periods[:3]  # 全局参考年份（最近三年）
@@ -1273,6 +1354,7 @@ def fetch_qcc_data(client_name: str, tools_filter: list = None) -> dict:
         'shareholders': ('股东信息', qcc.get_shareholder_info),
         'personnel': ('高管信息', qcc.get_key_personnel),
         'finance': ('财务数据', qcc.get_financial_data),
+        'annual_reports': ('工商年报', qcc.get_annual_reports),
         'investments': ('对外投资', qcc.get_external_investments),
         'listing': ('上市信息', qcc.get_listing_info),
         'branches': ('分支机构', qcc.get_branches),
@@ -1331,6 +1413,7 @@ def fetch_qcc_data(client_name: str, tools_filter: list = None) -> dict:
     shareholders = results.get('shareholders', {})
     personnel = results.get('personnel', {})
     finance = results.get('finance', {})
+    annual_reports = results.get('annual_reports', {})
     listing = results.get('listing', {})
     investments = results.get('investments', {})
     controller = results.get('controller', {})
@@ -1416,7 +1499,7 @@ def fetch_qcc_data(client_name: str, tools_filter: list = None) -> dict:
 
     # --- 1-4 财务情况《★》 ---
     if finance:
-        fin_rows = map_financial_to_table_v2(finance)
+        fin_rows = map_financial_to_table_v2(finance, annual_reports)
         ch1_sec1['tables'][4]['data'] = fin_rows  # 表 4: 财务情况
 
     # --- 1-5 上下游生态（保持骨架，全🟡） ---
@@ -1475,8 +1558,8 @@ def fetch_qcc_data(client_name: str, tools_filter: list = None) -> dict:
     # ---- 原始 QCC 接口数据（供 Excel 核对） ----
     tool_labels = {
         'registration': '工商信息', 'shareholders': '股东信息', 'personnel': '高管信息',
-        'finance': '财务数据', 'investments': '对外投资', 'listing': '上市信息',
-        'branches': '分支机构', 'controller': '实际控制人',
+        'finance': '财务数据', 'annual_reports': '工商年报', 'investments': '对外投资',
+        'listing': '上市信息', 'branches': '分支机构', 'controller': '实际控制人',
     }
     ext_labels = {
         'ipr': '知识产权', 'risk': '风险信息', 'operation': '经营动态', 'executive': '高管处罚',
