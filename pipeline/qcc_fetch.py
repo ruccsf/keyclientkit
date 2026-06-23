@@ -359,65 +359,56 @@ def _extract_annual_report_bs(annual_reports: dict) -> dict:
     从工商年报中提取资产负债表详细科目。
     返回 {指标名: {报告期: 值}} 格式，可直接 merge 到 indicators。
 
-    工商年报响应结构（推测）:
-      {'年报列表': [{'报告年份': '2023', '资产总额': ..., '负债总额': ...,
-                    '资产负债表': {'短期借款': ..., '长期借款': ..., ...}}]}
-    实际字段名以 API 返回为准，这里做全量提取。
+    QCC 实际响应结构:
+      {'企业年报信息': [{'年报年度': '2025年度报告',
+                      '企业资产状况信息': {'资产总额': ..., '负债总额': ..., ...}}]}
+    注意：很多企业选择"不公示"财务数据，此时这些字段的值是"企业选择不公示"。
     """
     indicators = {}
     if not annual_reports or not isinstance(annual_reports, dict):
         return indicators
 
-    # 尝试多种可能的响应路径
+    # QCC 实际 key: 企业年报信息
     report_list = (
+        annual_reports.get('企业年报信息', []) or
         annual_reports.get('年报列表', []) or
         annual_reports.get('annualReports', []) or
-        annual_reports.get('data', []) or
-        annual_reports.get('records', [])
+        []
     )
     if not isinstance(report_list, list) or not report_list:
-        # 可能是单层 dict，尝试直接提取
-        report_list = [annual_reports]
+        return indicators
+
+    # 不公示标记
+    HIDDEN_MARKERS = ('企业选择不公示', '不公示', '—', '-', '')
 
     for report in report_list:
         if not isinstance(report, dict):
             continue
-        # 报告期
+        # 报告期: 年报年度 → 提取年份数字
         period = _s(
+            report.get('年报年度', '') or
             report.get('报告年份', '') or
-            report.get('year', '') or
-            report.get('报告期', '') or
-            report.get('年度', '')
+            report.get('year', '')
         )
+        period = period.replace('年度报告', '').replace('年报', '').replace('年', '').strip()
         if not period:
             continue
-        period = period.replace('年报', '').replace('年', '').strip()
 
-        # 查找资产负债表数据（可能在多个路径下）
-        bs_data = (
-            report.get('资产负债表', {}) or
-            report.get('balanceSheet', {}) or
-            report.get('资产负债信息', {}) or
-            report.get('财务数据', {}).get('资产负债表', {}) or
-            report.get('financialData', {}).get('balanceSheet', {}) or
-            {}
-        )
-        if not isinstance(bs_data, dict) or not bs_data:
-            # 资产负债表可能在 report 自身（扁平结构）
-            # 尝试提取看起来像财务科目的 key
-            bs_data = {k: v for k, v in report.items()
-                       if k not in ('报告年份', 'year', '报告期', '年度',
-                                    '资产负债表', '利润表', '现金流量表',
-                                    '年报列表', 'data', 'records')}
+        # 路径 1: 企业资产状况信息（QCC 实际结构）
+        asset_info = report.get('企业资产状况信息', {})
+        if isinstance(asset_info, dict):
+            for k, v in asset_info.items():
+                val = _s(v)
+                if val and val not in HIDDEN_MARKERS:
+                    indicators.setdefault(k, {})[period] = val
 
-        for k, v in bs_data.items():
-            if not k or k.startswith('_'):
-                continue
-            # 跳过非数字值
-            val = _s(v)
-            if not val:
-                continue
-            indicators.setdefault(k, {})[period] = val
+        # 路径 2: 资产负债表（备选）
+        bs = report.get('资产负债表', {}) or report.get('balanceSheet', {})
+        if isinstance(bs, dict):
+            for k, v in bs.items():
+                val = _s(v)
+                if val and val not in HIDDEN_MARKERS:
+                    indicators.setdefault(k, {})[period] = val
 
     return indicators
 
