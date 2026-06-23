@@ -366,7 +366,7 @@ def map_financial_to_table_v2(finance: dict) -> list[dict]:
     # 收集指标数据
     indicators = {}  # {指标名: {报告期: 值}}
     for rec in records[:3]:
-        period = _s(rec.get('报告期', '')).replace('年报', '')
+        period = _s(rec.get('报告期', '')).replace('年报', '').rstrip('年')
         detail = rec.get('指标详情', {})
 
         pl = detail.get('财务报表', {}).get('利润表', {})
@@ -389,26 +389,6 @@ def map_financial_to_table_v2(finance: dict) -> list[dict]:
                     val += '%'
                 indicators.setdefault(k, {})[period] = val
 
-    # 计算付息负债 = 短期借款 + 长期借款 + 应付债券 + 一年内到期非流动负债
-    ib_keys = ['短期借款', '长期借款', '应付债券', '一年内到期非流动负债']
-    all_periods_for_ib = set()
-    for k in ib_keys:
-        if k in indicators:
-            all_periods_for_ib.update(indicators[k].keys())
-    for period in all_periods_for_ib:
-        total = 0.0
-        has_any = False
-        for k in ib_keys:
-            v = indicators.get(k, {}).get(period, '')
-            if v and v != '' and v != '-':
-                try:
-                    total += float(str(v).replace(',', '').replace('，', ''))
-                    has_any = True
-                except (ValueError, TypeError):
-                    pass
-        if has_any:
-            indicators.setdefault('付息负债', {})[period] = f'{total:,.0f}'
-
     all_periods = sorted(set(p for v in indicators.values() for p in v.keys()), reverse=True)
     global_yrs = all_periods[:3]  # 全局参考年份（最近三年）
 
@@ -417,12 +397,32 @@ def map_financial_to_table_v2(finance: dict) -> list[dict]:
     label_second  = f'近两年-{global_yrs[1]}年' if len(global_yrs) > 1 else '近两年'
     label_third   = f'前三年-{global_yrs[2]}年' if len(global_yrs) > 2 else '前三年'
 
-    priority_keys = ['短期借款', '长期借款', '应付债券', '一年内到期非流动负债',
-                     '付息负债', '应付票据', '应收票据',
-                     '资产合计', '负债合计', '所有者权益总计',
-                     '营业总收入', '利润总额', '净利润',
-                     '经营活动产生的现金流',
-                     '资产负债率', '净利率', '毛利率', '流动比率', '速动比率']
+    # 计算付息负债 = 短期借款 + 长期借款 + 应付债券 + 一年内到期非流动负债
+    debt_keys = ['短期借款', '长期借款', '应付债券', '一年内到期非流动负债']
+    for period in global_yrs:
+        total = 0.0
+        has_any = False
+        for dk in debt_keys:
+            val_str = indicators.get(dk, {}).get(period, '')
+            if val_str:
+                try:
+                    total += float(str(val_str).replace(',', ''))
+                    has_any = True
+                except (ValueError, AttributeError):
+                    pass
+        if has_any:
+            indicators.setdefault('付息负债', {})[period] = f'{total:,.2f}'
+
+    priority_keys = [
+        # 计息负债相关（最前面）
+        '短期借款', '长期借款', '应付债券', '一年内到期非流动负债',
+        '付息负债',
+        '应付票据', '应收票据',
+        # 原有核心财务指标
+        '营业总收入', '利润总额', '净利润', '资产合计', '负债合计',
+        '所有者权益总计', '经营活动产生的现金流', '资产负债率',
+        '净利率', '毛利率', '流动比率', '速动比率',
+    ]
 
     rows = []
     for key in priority_keys:
@@ -711,7 +711,7 @@ def build_skeleton(client_name: str) -> dict:
                         'title': '存续期债券明细',
                         'type': 'list',
                         'data': [
-                            {'债券名称': '(待检索)', '余额(万元)': '', '利率(%)': '', '到期日': '', '资金用途': '', '_status': 'yellow'},
+                            {'债券名称': '(待检索存续债券)', '余额(万元)': '', '利率(%)': '', '到期日': '', '资金用途': '', '_status': 'yellow'},
                         ],
                     },
                 ]},
@@ -1471,6 +1471,24 @@ def fetch_qcc_data(client_name: str, tools_filter: list = None) -> dict:
     if errors:
         data['meta']['qcc_errors'] = [{'tool': t, 'error': e} for t, e in errors]
         data['meta']['qcc_errors_note'] = '这些工具调用失败，对应字段已标记为 yellow，需 AI web_search 补充'
+
+    # ---- 原始 QCC 接口数据（供 Excel 核对） ----
+    tool_labels = {
+        'registration': '工商信息', 'shareholders': '股东信息', 'personnel': '高管信息',
+        'finance': '财务数据', 'investments': '对外投资', 'listing': '上市信息',
+        'branches': '分支机构', 'controller': '实际控制人',
+    }
+    ext_labels = {
+        'ipr': '知识产权', 'risk': '风险信息', 'operation': '经营动态', 'executive': '高管处罚',
+    }
+    raw_data = []
+    for key, label in tool_labels.items():
+        if key in results:
+            raw_data.append({'tool': key, 'label': label, 'response': results[key]})
+    for key, label in ext_labels.items():
+        if key in extended:
+            raw_data.append({'tool': key, 'label': label, 'response': extended[key]})
+    data['_qcc_raw'] = raw_data
 
     return data
 

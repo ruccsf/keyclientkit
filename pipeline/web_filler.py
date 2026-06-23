@@ -123,7 +123,7 @@ def get_search_plans(data: dict = None) -> list[SearchPlan]:
 
     # === Ch1(2) 企业发展前景 ===
     plans.extend([
-        SearchPlan('扩张转型规划', '未来3-5年扩张/转型规划',
+        SearchPlan('未来3-5年扩张/转型规划', '未来3-5年扩张/转型规划',
             queries=[f'{company} 发展战略 十四五 十五五 规划', f'{company} 战略目标 2025 2026'],
             priority_domains=['sasac.gov.cn'] if data and '国务院' in str(data.get('cover', {}).get('客户名称', {})) else [],
             extract_hint='摘取公司公开的战略规划、发展目标、转型方向',
@@ -176,19 +176,19 @@ def get_search_plans(data: dict = None) -> list[SearchPlan]:
 
     # === Ch2(2) 债券及其他融资情况 ===
     plans.extend([
-        SearchPlan('总体融资规模变动', '总体融资规模变动',
+        SearchPlan('上一年', '总体融资规模变动',
             queries=[f'{company} 债券 融资规模 债务 2024 2025'],
             priority_domains=['chinamoney.com.cn', 'shclearing.com.cn'],
             extract_hint='摘取近年付息负债总额、同比变动、主要融资方式',
             target_table='总体融资规模变动《★》', target_row_key='上一年'),
 
-        SearchPlan('近五年发债情况', '近五年发债情况',
+        SearchPlan('信用债', '近五年发债情况',
             queries=[f'{company} 债券发行 中期票据 公司债 2024 2025'],
             priority_domains=['chinamoney.com.cn'],
             extract_hint='摘取债券类型、发行金额、利率、发行时间',
             target_table='本级近五年发债情况', target_row_key='信用债'),
 
-        SearchPlan('存续期债券明细', '存续期债券明细',
+        SearchPlan('待检索存续债券', '存续期债券明细',
             queries=[f'{company} 存续债券 余额 到期 2025'],
             priority_domains=['chinamoney.com.cn', 'shclearing.com.cn'],
             extract_hint='摘取存续债券名称、余额、利率、到期日、资金用途',
@@ -197,7 +197,7 @@ def get_search_plans(data: dict = None) -> list[SearchPlan]:
 
     # === Ch3 机会缺口事实 ===
     plans.extend([
-        SearchPlan('新增项目融资需求', '新增项目融资需求',
+        SearchPlan('新增项目融资', '新增项目融资需求',
             queries=[f'{company} 新项目 投资计划 融资需求 2025 2026'],
             priority_domains=[], extract_hint='摘取公司公开的新项目信息及融资需求金额',
             target_table='机会缺口事实《★》', target_row_key='新增项目融资'),
@@ -227,7 +227,7 @@ def get_search_plans(data: dict = None) -> list[SearchPlan]:
             extract_hint='摘取与该行业相关的投融资政策、监管指引要点',
             target_table='政策导向与分层定位《★》', target_row_key='投融资政策指引'),
 
-        SearchPlan('适用贴息优惠政策', '适用贴息/优惠政策',
+        SearchPlan('适用贴息/优惠政策', '适用贴息/优惠政策',
             queries=[f'{industry} 贴息 优惠 扶持政策 财政补贴 2025'],
             priority_domains=['mof.gov.cn', 'gov.cn'],
             extract_hint='摘取行业可享受的贴息、税收优惠、财政补贴等政策',
@@ -236,7 +236,7 @@ def get_search_plans(data: dict = None) -> list[SearchPlan]:
 
     # === Ch1(1) 上下游生态 ===
     plans.extend([
-        SearchPlan('产业链全景图', '集团产业链/供应链全景图',
+        SearchPlan('集团产业链/供应链全景图', '集团产业链/供应链全景图',
             queries=[f'{company} 产业链 供应链 上下游 业务布局'],
             priority_domains=[], extract_hint='描述公司产业链布局和供应链特征',
             target_table='上下游生态', target_row_key='产业链'),
@@ -342,7 +342,8 @@ def fill_field(data: dict, field_key: str, content: str, source_url: str = '',
                                 '年份', '债券类型', '需求类型', '维度', '产品类别',
                                 '风险类别', '准入方式', '合作维度', '未覆盖业务领域',
                                 '短板类别', '目标维度', '拓展方向', '联动/创新类型',
-                                '接触类型', '对标维度']:
+                                '接触类型', '对标维度', '债券名称', '公司名称',
+                                '子公司名称', '银行']:
                         if field_key in str(row.get(col, '')):
                             matched = True
                             break
@@ -376,7 +377,7 @@ def _find_content_column(row: dict) -> str:
                 '债券类型', '需求类型', '维度', '产品类别', '风险类别', '准入方式',
                 '合作维度', '未覆盖业务领域', '短板类别', '目标维度', '拓展方向',
                 '序号', '接触类型', '角色', '银行', '职务', '子公司名称', '产品/服务',
-                '联动/创新类型', '对标维度', '年份'}
+                '联动/创新类型', '对标维度', '年份', '债券名称', '公司名称'}
     source_cols = {'备注/来源', '数据来源', '备注', '来源'}
     candidates = ['内容', '核心内容', '具体内容', '付息负债总额(万元)',
                   '发行金额(万元)', '余额(万元)', '方案描述', '风险点描述',

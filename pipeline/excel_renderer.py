@@ -281,6 +281,105 @@ def write_stats_sheet(wb: Workbook, data: dict):
     ws.cell(row=row+1, column=1, value=f'公开数据占比: {green/total*100:.0f}%' if total > 0 else '')
 
 
+def _flatten_qcc(obj, prefix='', max_depth=5, max_items=500):
+    """递归展平 QCC API 响应为 (路径, 值) 列表"""
+    rows = []
+    if max_depth <= 0:
+        return [(prefix, str(obj)[:200])]
+
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k.startswith('_'):
+                continue
+            path = f'{prefix}.{k}' if prefix else k
+            rows.extend(_flatten_qcc(v, path, max_depth - 1, max_items - len(rows)))
+            if len(rows) >= max_items:
+                break
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            path = f'{prefix}[{i}]'
+            rows.extend(_flatten_qcc(v, path, max_depth - 1, max_items - len(rows)))
+            if len(rows) >= max_items:
+                break
+    else:
+        val = str(obj) if obj is not None else ''
+        if len(val) > 500:
+            val = val[:500] + '…'
+        rows.append((prefix, val))
+
+    return rows
+
+
+def write_qcc_raw_sheet(wb, data: dict):
+    """企查查全部接口数据 Sheet — 原始 API 响应展平"""
+    raw = data.get('_qcc_raw', [])
+    if not raw:
+        return
+
+    ws = wb.create_sheet('企查查全部接口数据')
+
+    # 列宽
+    ws.column_dimensions['A'].width = 16
+    ws.column_dimensions['B'].width = 14
+    ws.column_dimensions['C'].width = 45
+    ws.column_dimensions['D'].width = 55
+
+    # 表头
+    headers = ['接口名称', '中文备注', '字段路径', '值']
+    for ci, h in enumerate(headers, 1):
+        c = ws.cell(row=1, column=ci, value=h)
+        c.font = HEADER_FONT
+        c.fill = HEADER_FILL
+        c.border = THIN_BORDER
+        c.alignment = WRAP
+
+    row = 2
+    for entry in raw:
+        tool = entry.get('tool', '')
+        label = entry.get('label', '')
+        resp = entry.get('response')
+
+        if resp is None:
+            ws.cell(row=row, column=1, value=tool).border = THIN_BORDER
+            ws.cell(row=row, column=2, value=label).border = THIN_BORDER
+            ws.cell(row=row, column=3, value='(无数据)').border = THIN_BORDER
+            ws.cell(row=row, column=4, value='').border = THIN_BORDER
+            row += 1
+            continue
+
+        if isinstance(resp, dict) and resp.get('error'):
+            ws.cell(row=row, column=1, value=tool).border = THIN_BORDER
+            ws.cell(row=row, column=2, value=label).border = THIN_BORDER
+            ws.cell(row=row, column=3, value='[错误]').border = THIN_BORDER
+            ws.cell(row=row, column=4, value=str(resp.get('error', ''))[:500]).border = THIN_BORDER
+            row += 1
+            continue
+
+        # 展平
+        flat = _flatten_qcc(resp)
+        if not flat:
+            ws.cell(row=row, column=1, value=tool).border = THIN_BORDER
+            ws.cell(row=row, column=2, value=label).border = THIN_BORDER
+            ws.cell(row=row, column=3, value='(空响应)').border = THIN_BORDER
+            row += 1
+            continue
+
+        for path, val in flat:
+            ws.cell(row=row, column=1, value=tool).border = THIN_BORDER
+            ws.cell(row=row, column=2, value=label).border = THIN_BORDER
+            ws.cell(row=row, column=3, value=path).border = THIN_BORDER
+            ws.cell(row=row, column=4, value=val).border = THIN_BORDER
+            ws.cell(row=row, column=4).alignment = WRAP
+            row += 1
+
+        # 接口间空行
+        row += 1
+
+    # 冻结表头
+    ws.freeze_panes = 'A2'
+    ws.auto_filter.ref = f'A1:D{row - 1}'
+
+
 # ============================================================
 # 主入口
 # ============================================================
@@ -311,6 +410,9 @@ def generate_excel(data: dict, output_path: str) -> str:
         ch_data = data.get('chapters', {}).get(ch_key, {})
         if ch_data:
             write_chapter_sheet(wb, ch_key, ch_data, ch_name)
+
+    # 企查查原始数据 Sheet
+    write_qcc_raw_sheet(wb, data)
 
     # 末 Sheet: 数据统计
     write_stats_sheet(wb, data)
