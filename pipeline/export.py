@@ -14,6 +14,30 @@ import sys, os, json
 from pathlib import Path
 from datetime import datetime
 
+
+def _pick_output_dir() -> Path:
+    """弹出系统对话框让用户选择保存位置。仅交互式环境弹窗，否则回退默认 output/。"""
+    # 非交互式环境（AI agent / 管道）直接回退
+    if not sys.stdin.isatty():
+        return OUTPUT_DIR
+
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        chosen = filedialog.askdirectory(
+            title='选择报告保存位置',
+            initialdir=str(OUTPUT_DIR),
+        )
+        root.destroy()
+        if chosen:
+            return Path(chosen)
+    except Exception:
+        pass
+    return OUTPUT_DIR
+
 SKILL_DIR = Path(__file__).parent.parent
 PIPELINE_DIR = Path(__file__).parent
 SESSIONS_DIR = SKILL_DIR / 'sessions'
@@ -91,7 +115,8 @@ def _check_yellow_fields(data: dict) -> int:
     return empty_yellows, total_yellows
 
 
-def cmd_export(client_name: str, excel_only=False, html_only=False, force=False) -> dict:
+def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
+               output_dir: Path = None) -> dict:
     """导出 Excel + HTML"""
     session_path = SESSIONS_DIR / client_name / 'data.json'
     if not session_path.exists():
@@ -115,21 +140,22 @@ def cmd_export(client_name: str, excel_only=False, html_only=False, force=False)
     elif total_yellows > 0:
         print(f'✅ 🟡 字段已全部搜索（{total_yellows} 行）')
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir = output_dir or OUTPUT_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     safe_name = data['meta'].get('client_name', client_name).replace('/', '_')[:30]
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
 
     if not html_only:
         from excel_renderer import generate_excel
-        excel_path = OUTPUT_DIR / f'{safe_name}_核对表_{ts}.xlsx'
+        excel_path = out_dir / f'{safe_name}_核对表_{ts}.xlsx'
         generate_excel(data, str(excel_path))
         size_kb = excel_path.stat().st_size // 1024
         print(f'✅ Excel: {excel_path.absolute()} ({size_kb}KB)')
 
     if not excel_only:
         from html_renderer import generate_html
-        html_path = OUTPUT_DIR / f'{safe_name}合作策略_报告_{ts}.html'
+        html_path = out_dir / f'{safe_name}合作策略_报告_{ts}.html'
         generate_html(data, str(html_path))
         size_kb = html_path.stat().st_size // 1024
         print(f'✅ HTML:  {html_path.absolute()} ({size_kb}KB)')
@@ -138,7 +164,7 @@ def cmd_export(client_name: str, excel_only=False, html_only=False, force=False)
     return data
 
 
-def cmd_readback(client_name: str):
+def cmd_readback(client_name: str, output_dir: Path = None):
     """读回 Excel 修改 → 合并 JSON → 重生成 HTML"""
     session_path = SESSIONS_DIR / client_name / 'data.json'
     if not session_path.exists():
@@ -148,13 +174,14 @@ def cmd_readback(client_name: str):
     with open(session_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
+    out_dir = output_dir or OUTPUT_DIR
     safe_name = data['meta'].get('client_name', client_name).replace('/', '_')[:30]
 
     # 找最新的核对表（按时间戳排序）
-    candidates = sorted(OUTPUT_DIR.glob(f'{safe_name}_核对表_*.xlsx'), reverse=True)
+    candidates = sorted(out_dir.glob(f'{safe_name}_核对表_*.xlsx'), reverse=True)
     if not candidates:
         # 兼容旧版无时间戳文件
-        legacy = OUTPUT_DIR / f'{safe_name}_核对表.xlsx'
+        legacy = out_dir / f'{safe_name}_核对表.xlsx'
         if legacy.exists():
             candidates = [legacy]
     if not candidates:
@@ -177,7 +204,7 @@ def cmd_readback(client_name: str):
     # 重新生成 HTML（带去重时间戳）
     from html_renderer import generate_html
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-    html_path = OUTPUT_DIR / f'{safe_name}合作策略_报告_{ts}.html'
+    html_path = out_dir / f'{safe_name}合作策略_报告_{ts}.html'
     generate_html(data, str(html_path))
     print(f'✅ HTML 已更新: {html_path.absolute()}')
 
@@ -195,10 +222,13 @@ if __name__ == '__main__':
     excel_only = False
     html_only = False
     force = False
+    output_dir = None
 
     for i, arg in enumerate(sys.argv[1:]):
         if arg == '--client' and i + 1 < len(sys.argv) - 1:
             client = sys.argv[i + 2]
+        elif arg == '--output-dir' and i + 1 < len(sys.argv) - 1:
+            output_dir = Path(sys.argv[i + 2])
         elif arg == '--readback':
             readback = True
         elif arg == '--stats':
@@ -211,7 +241,7 @@ if __name__ == '__main__':
             force = True
 
     if not client:
-        print('用法: python pipeline/export.py --client <企业名> [--readback|--stats|--excel-only|--html-only|--force]')
+        print('用法: python pipeline/export.py --client <企业名> [--output-dir <目录>] [--readback|--stats|--excel-only|--html-only|--force]')
         sys.exit(1)
 
     # Determine session folder
@@ -229,6 +259,10 @@ if __name__ == '__main__':
         else:
             print(f'❌ 未找到 data.json')
     elif readback:
-        cmd_readback(client)
+        if output_dir is None:
+            output_dir = _pick_output_dir()
+        cmd_readback(client, output_dir=output_dir)
     else:
-        cmd_export(client, excel_only=excel_only, html_only=html_only, force=force)
+        if output_dir is None:
+            output_dir = _pick_output_dir()
+        cmd_export(client, excel_only=excel_only, html_only=html_only, force=force, output_dir=output_dir)
