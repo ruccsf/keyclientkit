@@ -117,7 +117,7 @@ def _check_yellow_fields(data: dict) -> int:
 
 def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
                output_dir: Path = None) -> dict:
-    """导出 Excel + HTML"""
+    """导出 Excel + HTML。output_dir 必须由调用方在生成前确定（只弹一次对话框）。"""
     session_path = SESSIONS_DIR / client_name / 'data.json'
     if not session_path.exists():
         print(f'❌ 未找到客户数据: {session_path}')
@@ -140,25 +140,30 @@ def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
     elif total_yellows > 0:
         print(f'✅ 🟡 字段已全部搜索（{total_yellows} 行）')
 
-    out_dir = output_dir or OUTPUT_DIR
+    if output_dir is None:
+        output_dir = OUTPUT_DIR
+    out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     safe_name = data['meta'].get('client_name', client_name).replace('/', '_')[:30]
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    print(f'📁 输出目录: {out_dir.absolute()}')
+    print(f'⏳ 正在生成报告...')
 
     if not html_only:
         from excel_renderer import generate_excel
         excel_path = out_dir / f'{safe_name}_核对表_{ts}.xlsx'
         generate_excel(data, str(excel_path))
         size_kb = excel_path.stat().st_size // 1024
-        print(f'✅ Excel: {excel_path.absolute()} ({size_kb}KB)')
+        print(f'✅ Excel: {excel_path.name} ({size_kb}KB)')
 
     if not excel_only:
         from html_renderer import generate_html
         html_path = out_dir / f'{safe_name}合作策略_报告_{ts}.html'
         generate_html(data, str(html_path))
         size_kb = html_path.stat().st_size // 1024
-        print(f'✅ HTML:  {html_path.absolute()} ({size_kb}KB)')
+        print(f'✅ HTML:  {html_path.name} ({size_kb}KB)')
 
     print_stats(data)
     return data
@@ -260,9 +265,16 @@ if __name__ == '__main__':
             print(f'❌ 未找到 data.json')
     elif readback:
         if output_dir is None:
+            print('📁 正在打开保存位置选择对话框...')
             output_dir = _pick_output_dir()
+        if output_dir is not None:
+            print(f'📁 已选择: {output_dir.absolute()}')
         cmd_readback(client, output_dir=output_dir)
     else:
+        # 导出：先生成所有产物再写盘，对话框只弹一次
         if output_dir is None:
+            print('📁 正在打开保存位置选择对话框...')
             output_dir = _pick_output_dir()
+        if output_dir is not None:
+            print(f'📁 已选择: {output_dir.absolute()}')
         cmd_export(client, excel_only=excel_only, html_only=html_only, force=force, output_dir=output_dir)

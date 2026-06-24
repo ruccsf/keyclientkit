@@ -92,42 +92,87 @@ def get_search_plans(data: dict = None) -> list[SearchPlan]:
     )
 
     # === Ch1(1) 财务情况表 详细科目（🟡 Web Search 补充） ===
-    # 这些科目 QCC MCP get_financial_data 不返回，需从审计报告/债券公告中搜索
+    # 这些科目 QCC MCP get_financial_data 不返回，需从 chinamoney.com.cn 审计报告资产负债表抓取
+    # ⚠️ 必须用 WebFetch 直接打开页面提取精确数值，禁止写文字描述或估算范围！
+    # ⚠️ 提取后使用 column_values 分别写入三个年份列（上一年/近两年/前三年）
     plans.extend([
         SearchPlan('短期借款', '短期借款',
-            queries=[f'{company} 审计报告 资产负债表 短期借款 期末余额'],
-            priority_domains=['data.eastmoney.com', 'chinamoney.com.cn', 'cnfin.com'],
-            extract_hint='提取短期借款期末余额(合并口径)，同时提取期初余额作为对比',
+            queries=[f'{company} 审计报告 资产负债表 chinamoney.com.cn',
+                     f'{company} 短期借款 期末余额 万元 合并口径'],
+            priority_domains=['chinamoney.com.cn'],
+            extract_hint=(
+                '【必须用WebFetch打开chinamoney.com.cn页面】'
+                '从资产负债表提取"短期借款"近三年期末余额（合并口径）。'
+                '提取精确数值（万元），如 "1,852,345" 而非 "约180-200亿"。'
+                '禁止写文字描述、禁止估算范围、禁止只写一年。'
+                '提取后请用 column_values 一次性写入三个年份列（从左到右升序），'
+                '如: column_values={"2023年": "...", "2024年": "...", "2025年": "..."}'
+            ),
             target_table='财务情况《★》', target_row_key='短期借款'),
 
         SearchPlan('长期借款', '长期借款',
-            queries=[f'{company} 审计报告 资产负债表 长期借款 期末余额'],
-            priority_domains=['data.eastmoney.com', 'chinamoney.com.cn', 'cnfin.com'],
-            extract_hint='提取长期借款期末余额(合并口径)，同时提取期初余额作为对比',
+            queries=[f'{company} 审计报告 资产负债表 chinamoney.com.cn',
+                     f'{company} 长期借款 期末余额 万元 合并口径'],
+            priority_domains=['chinamoney.com.cn'],
+            extract_hint=(
+                '【必须用WebFetch打开chinamoney.com.cn页面】'
+                '从资产负债表提取"长期借款"近三年期末余额（合并口径）。'
+                '提取精确数值（万元），如 "2,500,000" 而非 "约250-300亿"。'
+                '禁止写文字描述、禁止估算范围、禁止只写一年。'
+                '提取后请用 column_values 一次性写入三个年份列（从左到右升序）'
+            ),
             target_table='财务情况《★》', target_row_key='长期借款'),
 
         SearchPlan('应付债券', '应付债券',
-            queries=[f'{company} 审计报告 资产负债表 应付债券 期末余额'],
-            priority_domains=['data.eastmoney.com', 'chinamoney.com.cn', 'cnfin.com'],
-            extract_hint='提取应付债券期末余额(合并口径)，注意含永续债的需单独标注',
+            queries=[f'{company} 审计报告 资产负债表 chinamoney.com.cn',
+                     f'{company} 应付债券 期末余额 万元 合并口径'],
+            priority_domains=['chinamoney.com.cn'],
+            extract_hint=(
+                '【必须用WebFetch打开chinamoney.com.cn页面】'
+                '从资产负债表提取"应付债券"近三年期末余额（合并口径）。'
+                '提取精确数值（万元）。含永续债的需在source_note中标注。'
+                '禁止写文字描述、禁止估算范围、禁止只写一年。'
+                '提取后请用 column_values 一次性写入三个年份列（从左到右升序）'
+            ),
             target_table='财务情况《★》', target_row_key='应付债券'),
 
         SearchPlan('一年内到期非流动负债', '一年内到期非流动负债',
-            queries=[f'{company} 审计报告 资产负债表 一年内到期非流动负债'],
-            priority_domains=['data.eastmoney.com', 'chinamoney.com.cn', 'cnfin.com'],
-            extract_hint='提取一年内到期非流动负债期末余额(合并口径)',
+            queries=[f'{company} 审计报告 资产负债表 chinamoney.com.cn',
+                     f'{company} 一年内到期非流动负债 万元'],
+            priority_domains=['chinamoney.com.cn'],
+            extract_hint=(
+                '【必须用WebFetch打开chinamoney.com.cn页面】'
+                '从资产负债表提取"一年内到期的非流动负债"近三年期末余额（合并口径）。'
+                '提取精确数值（万元）。'
+                '禁止写文字描述、禁止估算范围、禁止只写一年。'
+                '提取后请用 column_values 一次性写入三个年份列（从左到右升序）'
+            ),
             target_table='财务情况《★》', target_row_key='一年内到期非流动负债'),
 
         SearchPlan('应付票据', '应付票据',
-            queries=[f'{company} 审计报告 资产负债表 应付票据 期末余额'],
-            priority_domains=['data.eastmoney.com', 'chinamoney.com.cn', 'cnfin.com'],
-            extract_hint='提取应付票据期末余额(合并口径)',
+            queries=[f'{company} 审计报告 资产负债表 chinamoney.com.cn',
+                     f'{company} 应付票据 期末余额 万元 合并口径'],
+            priority_domains=['chinamoney.com.cn'],
+            extract_hint=(
+                '【必须用WebFetch打开chinamoney.com.cn页面】'
+                '从资产负债表提取"应付票据"近三年期末余额（合并口径）。'
+                '提取精确数值（万元）。'
+                '禁止写文字描述、禁止估算范围、禁止只写一年。'
+                '提取后请用 column_values 一次性写入三个年份列（从左到右升序）'
+            ),
             target_table='财务情况《★》', target_row_key='应付票据'),
 
         SearchPlan('应收票据', '应收票据',
-            queries=[f'{company} 审计报告 资产负债表 应收票据 期末余额'],
-            priority_domains=['data.eastmoney.com', 'chinamoney.com.cn', 'cnfin.com'],
-            extract_hint='提取应收票据期末余额(合并口径)',
+            queries=[f'{company} 审计报告 资产负债表 chinamoney.com.cn',
+                     f'{company} 应收票据 期末余额 万元 合并口径'],
+            priority_domains=['chinamoney.com.cn'],
+            extract_hint=(
+                '【必须用WebFetch打开chinamoney.com.cn页面】'
+                '从资产负债表提取"应收票据"近三年期末余额（合并口径）。'
+                '提取精确数值（万元）。'
+                '禁止写文字描述、禁止估算范围、禁止只写一年。'
+                '提取后请用 column_values 一次性写入三个年份列（从左到右升序）'
+            ),
             target_table='财务情况《★》', target_row_key='应收票据'),
     ])
 
@@ -309,7 +354,8 @@ def load_client_data(client_name: str) -> dict:
 
 
 def save_client_data(client_name: str, data: dict):
-    """保存客户数据 JSON"""
+    """保存客户数据 JSON（保存前自动重算派生字段如付息负债）"""
+    recompute_derived_fields(data)
     session_path = SESSIONS_DIR / client_name
     session_path.mkdir(parents=True, exist_ok=True)
     with open(session_path / 'data.json', 'w', encoding='utf-8') as f:
@@ -323,8 +369,12 @@ def batch_fill(client_name: str, results: list[dict]) -> int:
     Args:
         client_name: 企业名称（sessions 目录名）
         results: [
+            # 单列填充（向后兼容）
             {"field": "主营业务板块营收占比", "content": "...", "source_url": "https://...", "source_note": "企业年报"},
-            {"field": "行业排名",            "content": "...", "source_url": "https://...", "source_note": "行业协会"},
+            # 多列填充（用于财务表等含年份列的表）
+            {"field": "短期借款",
+             "column_values": {"上一年-2024年": "1,852,345", "近两年-2023年": "1,750,000", "前三年-2022年": "1,600,000"},
+             "source_url": "https://...", "source_note": "chinamoney.com.cn"},
             ...
         ]
 
@@ -344,28 +394,35 @@ def batch_fill(client_name: str, results: list[dict]) -> int:
     for r in results:
         field = r.get('field', '')
         content = r.get('content', '')
+        column_values = r.get('column_values', None)
         source_url = r.get('source_url', '')
         source_note = r.get('source_note', '')
-        if not field or not content:
+        if not field:
             continue
-        if fill_field(data, field, content, source_url, source_note):
+        if not content and not column_values:
+            continue
+        if fill_field(data, field, content=content, source_url=source_url,
+                      source_note=source_note, column_values=column_values):
             count += 1
     save_client_data(client_name, data)
     return count
 
 
-def fill_field(data: dict, field_key: str, content: str, source_url: str = '',
-               source_note: str = '', status: str = 'yellow'):
+def fill_field(data: dict, field_key: str, content: str = '', source_url: str = '',
+               source_note: str = '', status: str = 'yellow',
+               column_values: dict[str, str] = None):
     """
     在骨架中查找并填充指定字段。
 
     Args:
         data: 报告 JSON 数据
         field_key: 字段关键字（匹配"信息项"/"分析维度"/"指标"等列的值）
-        content: 填充内容
+        content: 填充内容（单列写入，向后兼容）
         source_url: 数据来源 URL
         source_note: 来源备注（如未提供，从 URL 提取域名）
         status: _status 值，默认 yellow
+        column_values: 多列写入 {列名: 值}，如 {'上一年-2024年': '1,234,567', '近两年-2023年': '1,100,000'}
+                       用于财务表等多列结构。提供后优先使用，content 参数也会被写入（如有）。
     """
     found = False
     for ch_key, ch_val in data.get('chapters', {}).items():
@@ -391,10 +448,17 @@ def fill_field(data: dict, field_key: str, content: str, source_url: str = '',
                     if not matched:
                         continue
 
-                    # 找到目标行 → 填充内容
-                    content_col = _find_content_column(row)
-                    if content_col:
-                        row[content_col] = content
+                    # 多列写入（优先，用于财务表等多列结构）
+                    if column_values:
+                        for col_name, col_val in column_values.items():
+                            if col_name in row:
+                                row[col_name] = str(col_val)
+
+                    # 单列写入（向后兼容）
+                    if content:
+                        content_col = _find_content_column(row)
+                        if content_col:
+                            row[content_col] = content
 
                     # 设置来源
                     if source_url:
@@ -430,6 +494,62 @@ def _find_content_column(row: dict) -> str:
         if not c.startswith('_') and c not in key_cols and c not in source_cols:
             return c
     return None
+
+
+def recompute_derived_fields(data: dict):
+    """
+    重算派生财务字段，在 Web Search 填充后调用。
+
+    目前处理的派生字段：
+    - 付息负债 = 短期借款 + 长期借款 + 应付债券 + 一年内到期非流动负债（逐年计算）
+
+    遍历财务情况《★》表，找到四个组件字段的值，逐列求和写入付息负债行。
+    """
+    DEBT_KEYS = ['短期借款', '长期借款', '应付债券', '一年内到期非流动负债']
+    SKIP_COLS = {'财务指标', '_status', '_source_url', '备注/来源', '数据来源'}
+
+    for ch_val in data.get('chapters', {}).values():
+        if not isinstance(ch_val, dict):
+            continue
+        for sec_val in ch_val.values():
+            if not isinstance(sec_val, dict):
+                continue
+            for tbl in sec_val.get('tables', []):
+                if '财务情况' not in tbl.get('title', ''):
+                    continue
+
+                rows = tbl.get('data', [])
+                # 按财务指标值建立查找索引
+                lookup = {}
+                for row in rows:
+                    key = row.get('财务指标', '')
+                    if key:
+                        lookup[key] = row
+
+                target_row = lookup.get('付息负债')
+                if not target_row:
+                    continue
+
+                # 找出所有年份列（非元数据列）
+                year_cols = [c for c in target_row
+                           if c not in SKIP_COLS and not c.startswith('_')]
+
+                for col in year_cols:
+                    total = 0.0
+                    has_any = False
+                    for dk in DEBT_KEYS:
+                        src_row = lookup.get(dk, {})
+                        val = str(src_row.get(col, '')).replace(',', '').strip()
+                        if val:
+                            try:
+                                total += float(val)
+                                has_any = True
+                            except (ValueError, AttributeError):
+                                pass
+                    if has_any:
+                        target_row[col] = f'{total:,.2f}'
+
+                break  # 只处理第一个匹配的财务情况表
 
 
 def get_yellow_fields(data: dict) -> list[dict]:
@@ -522,7 +642,9 @@ def get_search_tasks(client_name: str) -> dict:
         'instructions': {
             'how_to_search': '对每条 task，用你的搜索引擎搜索 query。优先打开 priority_domains 中的链接。',
             'how_to_fill': '搜到数据后，调用 Python: web_filler.fill_field(data, field_key="...", content="...", source_url="...")',
+            'how_to_fill_multi_column': '对于财务情况表的字段(target_table="财务情况《★》")，必须用 WebFetch 打开 chinamoney.com.cn 页面提取精确数值，然后使用 column_values={"2023年": "...", "2024年": "...", "2025年": "..."}（从左到右升序）一次性写入三个年份列',
             'no_fabrication': '搜不到就跳过，不要编造数据。该字段保持空 🟡。',
+            'no_estimation_for_financial': '财务字段(短期借款/长期借款/应付债券/一年内到期非流动负债/应付票据/应收票据)禁止写文字描述或估算范围，必须提取精确数值',
             'source_required': '每条数据必须标注 source_url，即你实际打开的页面 URL。',
         },
         'tasks': tasks,

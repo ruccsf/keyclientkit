@@ -187,12 +187,39 @@ For each plan: search using your built-in web search, prioritize `priority` doma
 ```python
 from web_filler import batch_fill
 
+# 单列填充（大多数字段）
 filled = batch_fill('{企业名称}', [
     {"field": "field_key", "content": "extracted data", "source_url": "https://...", "source_note": "gov.cn"},
     {"field": "field_key2", "content": "经检索未发现公开数据", "source_url": "", "source_note": ""},
 ])
 print(f'✅ 已填充 {filled} 个字段')
 ```
+
+**⚠️ 财务情况《★》表（多列填充）：** 短期借款/长期借款/应付债券/一年内到期非流动负债/应付票据/应收票据 这 6 个字段需要分别填入三个年份列（上一年-YYYY年 / 近两年-YYYY年 / 前三年-YYYY年），必须使用 `column_values`：
+
+```python
+from web_filler import batch_fill
+
+# 财务字段多列填充（从 chinamoney.com.cn 资产负债表 WebFetch 提取精确数值后）
+# ⚠️ 列名从左到右升序：最旧年份 → 最新年份
+filled = batch_fill('{企业名称}', [
+    {"field": "短期借款",
+     "column_values": {"2023年": "1,600,000", "2024年": "1,750,000", "2025年": "1,852,345"},
+     "source_url": "https://www.chinamoney.com.cn/chinese/cwbg/...", "source_note": "chinamoney.com.cn"},
+    {"field": "长期借款",
+     "column_values": {"2023年": "2,200,000", "2024年": "2,350,000", "2025年": "2,500,000"},
+     "source_url": "https://www.chinamoney.com.cn/chinese/cwbg/...", "source_note": "chinamoney.com.cn"},
+    # ... 其余 4 个字段同理
+])
+print(f'✅ 已填充 {filled} 个财务字段')
+```
+
+**财务字段搜索特殊要求：**
+1. **必须用 WebFetch** 直接打开 `chinamoney.com.cn` 的年报/审计报告页面（不要只依赖 WebSearch 摘要）
+2. **必须提取精确数值**（万元），如 `"1,852,345"`——禁止写文字描述（"约180-200亿"）、禁止估算范围
+3. **必须分别提取近三年数据**，每个年份列填入对应值
+4. 所有 6 个字段通常在同一份审计报告资产负债表页面中，一个 WebFetch 即可全部获取
+5. 填充完成后，`save_client_data()` 会自动重算 `付息负债`
 
 **Search rules:**
 - Government/official sources first: gov.cn > ndrc.gov.cn > sasac.gov.cn > industry associations > company website > news

@@ -461,13 +461,14 @@ def map_financial_to_table_v2(finance: dict, annual_reports: dict = None) -> lis
                     if p not in indicators[k]:
                         indicators[k][p] = v
 
-    all_periods = sorted(set(p for v in indicators.values() for p in v.keys()), reverse=True)
-    global_yrs = all_periods[:3]  # 全局参考年份（最近三年）
+    all_periods = sorted(set(p for v in indicators.values() for p in v.keys()))  # 升序
+    global_yrs = all_periods[-3:]  # 最近三年，从左到右为旧→新（2023年 / 2024年 / 2025年）
 
-    # 列头标签：上一年/近两年/前三年 + 对应年份数字
-    label_latest  = f'上一年-{global_yrs[0]}年' if len(global_yrs) > 0 else '上一年'
-    label_second  = f'近两年-{global_yrs[1]}年' if len(global_yrs) > 1 else '近两年'
-    label_third   = f'前三年-{global_yrs[2]}年' if len(global_yrs) > 2 else '前三年'
+    # 列头标签：纯年份，从左到右升序
+    col_labels = [f'{y}年' for y in global_yrs]
+    col_1 = col_labels[0] if len(col_labels) > 0 else '早年'
+    col_2 = col_labels[1] if len(col_labels) > 1 else '近年'
+    col_3 = col_labels[2] if len(col_labels) > 2 else '今年'
 
     # 计算付息负债 = 短期借款 + 长期借款 + 应付债券 + 一年内到期非流动负债
     debt_keys = ['短期借款', '长期借款', '应付债券', '一年内到期非流动负债']
@@ -502,9 +503,9 @@ def map_financial_to_table_v2(finance: dict, annual_reports: dict = None) -> lis
             periods = indicators[key]
             row = {
                 '财务指标': key,
-                label_latest: periods.get(global_yrs[0], '') if len(global_yrs) > 0 else '',
-                label_second: periods.get(global_yrs[1], '') if len(global_yrs) > 1 else '',
-                label_third:  periods.get(global_yrs[2], '') if len(global_yrs) > 2 else '',
+                col_1: periods.get(global_yrs[0], '') if len(global_yrs) > 0 else '',
+                col_2: periods.get(global_yrs[1], '') if len(global_yrs) > 1 else '',
+                col_3: periods.get(global_yrs[2], '') if len(global_yrs) > 2 else '',
                 '_status': 'green',
             }
             rows.append(row)
@@ -513,9 +514,9 @@ def map_financial_to_table_v2(finance: dict, annual_reports: dict = None) -> lis
             # QCC 未返回 → 🟡 占位行，留待 Web Search 填充
             row = {
                 '财务指标': key,
-                label_latest: '',
-                label_second: '',
-                label_third: '',
+                col_1: '',
+                col_2: '',
+                col_3: '',
                 '_status': 'yellow',
             }
             rows.append(row)
@@ -523,9 +524,9 @@ def map_financial_to_table_v2(finance: dict, annual_reports: dict = None) -> lis
     for key, periods in indicators.items():
         row = {
             '财务指标': key,
-            label_latest: periods.get(global_yrs[0], '') if len(global_yrs) > 0 else '',
-            label_second: periods.get(global_yrs[1], '') if len(global_yrs) > 1 else '',
-            label_third:  periods.get(global_yrs[2], '') if len(global_yrs) > 2 else '',
+            col_1: periods.get(global_yrs[0], '') if len(global_yrs) > 0 else '',
+            col_2: periods.get(global_yrs[1], '') if len(global_yrs) > 1 else '',
+            col_3: periods.get(global_yrs[2], '') if len(global_yrs) > 2 else '',
             '_status': 'green',
         }
         rows.append(row)
@@ -679,9 +680,10 @@ def build_skeleton(client_name: str) -> dict:
                         'title': '财务情况《★》',
                         'type': 'list',
                         'data': [
-                            {'财务指标': '(待QCC财务数据)', '上一年': '', '近两年': '', '前三年': '', '_status': 'yellow'},
+                            {'财务指标': '(待QCC财务数据)', '早年': '', '近年': '', '今年': '', '_status': 'yellow'},
                         ],
-                        '_columns_brief': '财务指标🟢 | 前三年 | 近两年 | 上一年',
+                        '_columns_brief': '财务指标🟢 (万元) | 早年 | 近年 | 今年',
+                        '_unit': '万元',
                     },
                     {
                         'title': '上下游生态',

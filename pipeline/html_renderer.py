@@ -100,6 +100,13 @@ def _strip_emoji(text):
     return s.strip()
 
 
+def _is_numeric(val: str) -> bool:
+    """判断单元格值是否为金额/数字格式（用于右对齐）"""
+    if not val or not val.strip():
+        return False
+    return bool(re.match(r'^-?[\d,]+(?:\.\d+)?%?$', val.strip()))
+
+
 def _get_cover_val(cover, *keys):
     """尝试多个 key 获取封面值"""
     for k in keys:
@@ -227,7 +234,8 @@ def render_table(tbl: dict, table_index: int) -> str:
                 html += f'<td><strong>{icon} {format_cell(clean_val)}</strong></td>'
                 first = False
             else:
-                html += f'<td>{format_cell(val)}</td>'
+                align = 'text-align:right;' if _is_numeric(val) else ''
+                html += f'<td style="{align}">{format_cell(val)}</td>'
         html += '</tr>\n'
 
     html += '</tbody></table>\n'
@@ -262,6 +270,10 @@ def render_section(chapter_data: dict, chapter_num: int, chapter_name: str = '')
                 clean_title = re.sub(r'^[一二三四五六七八九十]+[、，]\s*', '', clean_title)
                 clean_title = _strip_emoji(clean_title)
                 html += f'\n<h4>{table_counter}. {esc(clean_title)}</h4>\n'
+            # 单位标注（财务表等）
+            unit = tbl.get('_unit', '')
+            if unit:
+                html += f'<div style="font-size:12px;color:#888;margin:2px 0 6px 4px;">单位：{esc(unit)}</div>\n'
             html += render_table(tbl, table_counter)
 
         # 文本块

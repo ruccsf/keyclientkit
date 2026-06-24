@@ -21,6 +21,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import re
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, numbers
 from openpyxl.utils import get_column_letter
@@ -45,6 +46,7 @@ THIN_BORDER = Border(
     top=Side(style='thin'), bottom=Side(style='thin')
 )
 WRAP = Alignment(wrap_text=True, vertical='top')
+RIGHT = Alignment(horizontal='right', vertical='top', wrap_text=True)
 CENTER = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
 STATUS_FILLS = {'green': GREEN_FILL, 'yellow': YELLOW_FILL, 'red': RED_FILL}
@@ -180,6 +182,14 @@ def write_chapter_sheet(wb: Workbook, ch_key: str, ch_data: dict, ch_name: str):
                 ws.cell(row=row, column=1, value=clean_title).font = Font(bold=True, color='C0392B')
                 row += 1
 
+            # 单位标注（财务表等）
+            unit = tbl.get('_unit', '')
+            if unit:
+                ws.merge_cells(f'A{row}:D{row}')
+                c = ws.cell(row=row, column=1, value=f'单位：{unit}')
+                c.font = Font(italic=True, color='888888', size=10)
+                row += 1
+
             # 表头
             display_cols = [k for k in data_rows[0].keys() if not k.startswith('_')]
             for ci, h in enumerate(display_cols + ['状态'], 1):
@@ -198,7 +208,10 @@ def write_chapter_sheet(wb: Workbook, ch_key: str, ch_data: dict, ch_name: str):
                 for ci, col_name in enumerate(display_cols, 1):
                     val = clean_for_excel(drow.get(col_name, ''))
                     c = ws.cell(row=row, column=ci, value=val)
-                    c.fill = fill; c.border = THIN_BORDER; c.alignment = WRAP
+                    c.fill = fill; c.border = THIN_BORDER
+                    # 数字/金额列右对齐，首列（标签列）保持左对齐
+                    is_num = ci > 1 and bool(re.match(r'^-?[\d,]+(?:\.\d+)?%?$', str(val).strip()))
+                    c.alignment = RIGHT if is_num else WRAP
 
                 # 状态列
                 status_label = {'green':'🟢已确认','yellow':'🟡待审核','red':'🔴待填写'}.get(st, '🔴')
