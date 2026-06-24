@@ -12,6 +12,7 @@
 
 import sys, os, json
 from pathlib import Path
+from datetime import datetime
 
 SKILL_DIR = Path(__file__).parent.parent
 PIPELINE_DIR = Path(__file__).parent
@@ -117,20 +118,21 @@ def cmd_export(client_name: str, excel_only=False, html_only=False, force=False)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     safe_name = data['meta'].get('client_name', client_name).replace('/', '_')[:30]
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
 
     if not html_only:
         from excel_renderer import generate_excel
-        excel_path = OUTPUT_DIR / f'{safe_name}_核对表.xlsx'
+        excel_path = OUTPUT_DIR / f'{safe_name}_核对表_{ts}.xlsx'
         generate_excel(data, str(excel_path))
         size_kb = excel_path.stat().st_size // 1024
-        print(f'✅ Excel: output/{excel_path.name} ({size_kb}KB)')
+        print(f'✅ Excel: {excel_path.absolute()} ({size_kb}KB)')
 
     if not excel_only:
         from html_renderer import generate_html
-        html_path = OUTPUT_DIR / f'{safe_name}合作策略_报告.html'
+        html_path = OUTPUT_DIR / f'{safe_name}合作策略_报告_{ts}.html'
         generate_html(data, str(html_path))
         size_kb = html_path.stat().st_size // 1024
-        print(f'✅ HTML:  output/{html_path.name} ({size_kb}KB)')
+        print(f'✅ HTML:  {html_path.absolute()} ({size_kb}KB)')
 
     print_stats(data)
     return data
@@ -147,12 +149,20 @@ def cmd_readback(client_name: str):
         data = json.load(f)
 
     safe_name = data['meta'].get('client_name', client_name).replace('/', '_')[:30]
-    excel_path = OUTPUT_DIR / f'{safe_name}_核对表.xlsx'
 
-    if not excel_path.exists():
-        print(f'❌ 未找到 Excel: {excel_path}')
+    # 找最新的核对表（按时间戳排序）
+    candidates = sorted(OUTPUT_DIR.glob(f'{safe_name}_核对表_*.xlsx'), reverse=True)
+    if not candidates:
+        # 兼容旧版无时间戳文件
+        legacy = OUTPUT_DIR / f'{safe_name}_核对表.xlsx'
+        if legacy.exists():
+            candidates = [legacy]
+    if not candidates:
+        print(f'❌ 未找到 Excel 核对表: {safe_name}_核对表_*.xlsx')
         print(f'   请先运行: python pipeline/export.py --client {client_name}')
         sys.exit(1)
+
+    excel_path = candidates[0]
 
     from excel_reader import read_excel_changes
 
@@ -164,11 +174,12 @@ def cmd_readback(client_name: str):
         json.dump(data, f, ensure_ascii=False, indent=2)
     print(f'💾 JSON 已更新: {session_path}')
 
-    # 重新生成 HTML
+    # 重新生成 HTML（带去重时间戳）
     from html_renderer import generate_html
-    html_path = OUTPUT_DIR / f'{safe_name}合作策略_报告.html'
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    html_path = OUTPUT_DIR / f'{safe_name}合作策略_报告_{ts}.html'
     generate_html(data, str(html_path))
-    print(f'✅ HTML 已更新: output/{html_path.name}')
+    print(f'✅ HTML 已更新: {html_path.absolute()}')
 
     print_stats(data)
 
