@@ -509,6 +509,16 @@ def map_financial_to_table_v2(finance: dict, annual_reports: dict = None) -> lis
             }
             rows.append(row)
             del indicators[key]
+        else:
+            # QCC 未返回 → 🟡 占位行，留待 Web Search 填充
+            row = {
+                '财务指标': key,
+                label_latest: '',
+                label_second: '',
+                label_third: '',
+                '_status': 'yellow',
+            }
+            rows.append(row)
 
     for key, periods in indicators.items():
         row = {

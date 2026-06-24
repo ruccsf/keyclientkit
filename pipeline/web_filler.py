@@ -91,6 +91,46 @@ def get_search_plans(data: dict = None) -> list[SearchPlan]:
             target_table='基础信息表《★》', target_row_key='外部评级'),
     )
 
+    # === Ch1(1) 财务情况表 详细科目（🟡 Web Search 补充） ===
+    # 这些科目 QCC MCP get_financial_data 不返回，需从审计报告/债券公告中搜索
+    plans.extend([
+        SearchPlan('短期借款', '短期借款',
+            queries=[f'{company} 审计报告 资产负债表 短期借款 期末余额'],
+            priority_domains=['data.eastmoney.com', 'chinamoney.com.cn', 'cnfin.com'],
+            extract_hint='提取短期借款期末余额(合并口径)，同时提取期初余额作为对比',
+            target_table='财务情况《★》', target_row_key='短期借款'),
+
+        SearchPlan('长期借款', '长期借款',
+            queries=[f'{company} 审计报告 资产负债表 长期借款 期末余额'],
+            priority_domains=['data.eastmoney.com', 'chinamoney.com.cn', 'cnfin.com'],
+            extract_hint='提取长期借款期末余额(合并口径)，同时提取期初余额作为对比',
+            target_table='财务情况《★》', target_row_key='长期借款'),
+
+        SearchPlan('应付债券', '应付债券',
+            queries=[f'{company} 审计报告 资产负债表 应付债券 期末余额'],
+            priority_domains=['data.eastmoney.com', 'chinamoney.com.cn', 'cnfin.com'],
+            extract_hint='提取应付债券期末余额(合并口径)，注意含永续债的需单独标注',
+            target_table='财务情况《★》', target_row_key='应付债券'),
+
+        SearchPlan('一年内到期非流动负债', '一年内到期非流动负债',
+            queries=[f'{company} 审计报告 资产负债表 一年内到期非流动负债'],
+            priority_domains=['data.eastmoney.com', 'chinamoney.com.cn', 'cnfin.com'],
+            extract_hint='提取一年内到期非流动负债期末余额(合并口径)',
+            target_table='财务情况《★》', target_row_key='一年内到期非流动负债'),
+
+        SearchPlan('应付票据', '应付票据',
+            queries=[f'{company} 审计报告 资产负债表 应付票据 期末余额'],
+            priority_domains=['data.eastmoney.com', 'chinamoney.com.cn', 'cnfin.com'],
+            extract_hint='提取应付票据期末余额(合并口径)',
+            target_table='财务情况《★》', target_row_key='应付票据'),
+
+        SearchPlan('应收票据', '应收票据',
+            queries=[f'{company} 审计报告 资产负债表 应收票据 期末余额'],
+            priority_domains=['data.eastmoney.com', 'chinamoney.com.cn', 'cnfin.com'],
+            extract_hint='提取应收票据期末余额(合并口径)',
+            target_table='财务情况《★》', target_row_key='应收票据'),
+    ])
+
     # === Ch1(2) 行业分析 ===
     plans.extend([
         SearchPlan('重要行业政策', '重要行业政策',
