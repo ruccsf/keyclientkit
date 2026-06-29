@@ -1463,16 +1463,22 @@ def fetch_qcc_data(client_name: str, tools_filter: list = None) -> dict:
             controller_desc = _s(raw_ctrl)[:200]
 
     # 预先从财务原始数据提取营收/净利润（供经营情况表使用）
-    revenue_val = ''
-    profit_val = ''
+    # 提取最近三年数据，而非仅最近一年
+    revenue_parts = []
+    profit_parts = []
     if finance:
         records = finance.get('财务数据信息', [])
-        if records:
-            # 取最近一期利润表数据
-            latest = records[0]
-            pl = latest.get('指标详情', {}).get('财务报表', {}).get('利润表', {})
-            revenue_val = _yuan_to_wan(pl.get('营业总收入', ''))
-            profit_val = _yuan_to_wan(pl.get('净利润', ''))
+        for rec in records[:3]:
+            period = _s(rec.get('报告期', '')).replace('年报', '').rstrip('年')
+            pl = rec.get('指标详情', {}).get('财务报表', {}).get('利润表', {})
+            rev = _yuan_to_wan(pl.get('营业总收入', ''))
+            prf = _yuan_to_wan(pl.get('净利润', ''))
+            if rev:
+                revenue_parts.append(f'{period}年 {rev}')
+            if prf:
+                profit_parts.append(f'{period}年 {prf}')
+    revenue_val = '  |  '.join(revenue_parts) if revenue_parts else ''
+    profit_val = '  |  '.join(profit_parts) if profit_parts else ''
 
     ops_rows = ch1_sec1['tables'][3]['data']  # 经营情况表 skeleton
     for r in ops_rows:
