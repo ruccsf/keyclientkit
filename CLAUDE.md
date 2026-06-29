@@ -205,15 +205,18 @@ QCC 的 `get_financial_data` 对以下 6 个资产负债表科目返回不稳定
 #### 1.5.2 下载并提取
 
 ```python
-from pdf_extractor import download_pdf, extract_balance_sheet
+from pdf_extractor import download_pdf, extract_balance_sheet, extract_subsidiaries
 
-# 下载 PDF
+# 下载 PDF（优先完整版募集书，非"摘要"版）
 pdf_path = download_pdf('{PDF URL}', 'sessions/{企业名称}/pdf/')
 if not pdf_path:
     print('⚠️ PDF 下载失败，跳过 PDF 补充')
 
 # 提取资产负债表
 bs_data = extract_balance_sheet(pdf_path)
+
+# 提取二级子公司列表（完整版募集书才有，摘要版不包含）
+subs = extract_subsidiaries(pdf_path)
 ```
 
 #### 1.5.3 写入骨架
@@ -235,9 +238,23 @@ if bs_data:
         })
     filled = batch_fill('{企业名称}', results)
     print(f'✅ PDF 补充 {filled} 个财务科目')
+
+# 子公司列表写入（直接替换骨架中的"在京企业架构 / 子公司列表"表数据）
+if subs:
+    for ch_val in data['chapters'].get('chapter2', {}).values():
+        for tbl in ch_val.get('tables', []):
+            if '子公司列表' in tbl.get('title', ''):
+                # 清洗：移除不规范条目
+                clean_subs = [s for s in subs if '公司' in s.get('子公司名称', '')]
+                tbl['data'] = clean_subs
+                print(f'✅ PDF 子公司: {len(clean_subs)} 家')
+                break
 ```
 
-**注意：** `extract_balance_sheet()` 返回的 dict key 就是骨架中的 `财务指标` 值（如 `短期借款`、`长期借款`），value 是 `{年份列: 数值}` dict，可直接用于 `column_values`。
+**注意：**
+- `extract_balance_sheet()` 返回的 dict key 是骨架中的 `财务指标` 值，value 是 `{年份列: 数值}` dict
+- `extract_subsidiaries()` 返回的 list 中每项含 `子公司名称`、`层级`、`业务板块`、`持股比例`、`实收资本(万元)`、`备注`，直接对齐骨架表格列名
+- **必须下载完整版募集书**（50MB+），摘要版不含子公司章节
 
 **如果 PDF 搜索失败或提取失败：** 继续执行 Step 2 Web Search——那 6 个科目会保持 🟡 状态，由 Web Search 兜底。
 

@@ -334,6 +334,133 @@ def extract_financial_data(pdf_path) -> dict:
 
 
 # ================================================================
+# 子公司提取
+# ================================================================
+
+def extract_subsidiaries(pdf_path) -> list[dict]:
+    """
+    从债券募集说明书 PDF 中提取二级子公司列表。
+
+    募集书通常有"发行人权益投资情况 → 主要子公司情况"章节。
+
+    返回: [{'子公司名称': '...', '层级': '二级子公司',
+            '业务板块': '...', '持股比例': '...', '实收资本(万元)': '...',
+            '备注': '...', '_status': 'green'}, ...]
+    """
+    lines = _extract_text_lines(pdf_path)
+
+    # 定位"主要子公司情况"
+    sec_start = None
+    for i, line in enumerate(lines):
+        if '主要子公司情况' in line or ('纳入合并报表范围' in line and '二级子公司' in line):
+            sec_start = i
+            break
+    if sec_start is None:
+        return []
+
+    search_end = min(sec_start + 200, len(lines))
+    subsidiaries = []
+    pending = None  # 跨行缓存: (name, location, biz, capital, ratio)
+
+    for i in range(sec_start, search_end):
+        line = lines[i].strip()
+        if not line:
+            continue
+
+        # 序号行: "1 企业名 ..."
+        m = re.match(r'^(\d{1,2})\s+(.+)', line)
+        if m:
+            # 先保存上一条 pending（如有）
+            if pending:
+                subsidiaries.append(pending)
+
+            rest = m.group(2)
+            parts = rest.split()
+
+            # 从后往前解析数值列
+            ratio = ''
+            capital = ''
+            # 检查最后是否持股比例
+            if parts and re.match(r'^[\d.]+%?$', parts[-1]):
+                ratio = parts.pop()
+            if parts and re.match(r'^[\d,]+(?:\.\d+)?$', parts[-1].replace(',', '')):
+                capital = parts.pop()
+
+            # 剩余: 企业名 + 经营地 + 业务性质
+            locations = {'北京','上海','天津','香港','深圳','广州','河北','浙江','江苏','西藏'}
+            name_parts = []
+            location = ''
+            biz_type = ''
+            found_loc = False
+            for p in parts:
+                if not found_loc and p in locations:
+                    location = p
+                    found_loc = True
+                elif not found_loc:
+                    name_parts.append(p)
+                else:
+                    biz_type = (biz_type + p) if biz_type else p
+            name = ' '.join(name_parts)
+
+            pending = {
+                '子公司名称': name,
+                '层级': '二级子公司',
+                '业务板块': biz_type,
+                '持股比例': ratio,
+                '实收资本(万元)': capital,
+                '备注': f'注册地: {location}' if location else '',
+                '_status': 'green',
+            }
+            continue
+
+        # 续行（无序号开头）
+        if pending:
+            clean = line.replace('：', ':')
+            # 持股比例续行: "直接:35.34" / "间接:18.67"
+            if clean.startswith('直接') or clean.startswith('间接'):
+                pending['持股比例'] = (pending['持股比例'] + ' / ' + clean) if pending['持股比例'] else clean
+            # 混合续行: "服务等 200,000.00 100.00" → 业务 + 资本 + 比例
+            elif re.search(r'\d', clean):
+                # 尝试从后往前拆分数字
+                parts = clean.split()
+                extracted_ratio = ''
+                extracted_capital = ''
+                if parts and re.match(r'^[\d.]+%?$', parts[-1]):
+                    extracted_ratio = parts.pop()
+                if parts and re.match(r'^[\d,]+(?:\.\d+)?$', parts[-1].replace(',', '')):
+                    extracted_capital = parts.pop()
+                biz_rest = ' '.join(parts)
+                # 合并到 pending
+                if extracted_ratio and not pending['持股比例']:
+                    pending['持股比例'] = extracted_ratio
+                if extracted_capital and not pending['实收资本(万元)']:
+                    pending['实收资本(万元)'] = extracted_capital
+                if biz_rest:
+                    pending['业务板块'] = pending['业务板块'] + biz_rest if pending['业务板块'] else biz_rest
+            # 纯中文续行：业务性质
+            elif re.match(r'^[一-鿿]+', clean):
+                pending['业务板块'] = pending['业务板块'] + clean if pending['业务板块'] else clean
+            continue
+
+        # 结束信号
+        if '发行人拥有被投资单位' in line:
+            break
+
+    # 保存最后一条
+    if pending:
+        subsidiaries.append(pending)
+
+    # 质量过滤：移除无效行（名称含数字%、名称过短等）
+    subsidiaries = [
+        s for s in subsidiaries
+        if not re.search(r'\d+\.?\d*%', s['子公司名称'])  # 不含百分比
+        and len(s['子公司名称']) >= 4  # 名称至少4个字
+    ]
+
+    return subsidiaries
+
+
+# ================================================================
 # 骨架映射
 # ================================================================
 
