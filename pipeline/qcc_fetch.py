@@ -548,16 +548,27 @@ def map_investments_to_subsidiaries_v2(investments: dict) -> list[dict]:
         items = investments
 
     rows = []
-    for item in items[:20]:
+    for item in items[:80]:
         if isinstance(item, dict):
             name = _s(item.get('被投资企业名称', item.get('企业名称', item.get('name', ''))))
             ratio = _s(item.get('持股比例', item.get('ratio', '')))
             status = _s(item.get('状态', item.get('status', '')))
 
-            # 推断层级
-            level = '子公司' if ('100' in ratio or '全资' in _s(item.get('与集团关系', ''))) else '参股公司'
             if not name:
                 continue
+
+            # 推断层级
+            if '100' in ratio or '全资' in _s(item.get('与集团关系', '')):
+                level = '子公司'
+            elif ratio:
+                # 尝试解析数值：>50% 为控股子公司
+                try:
+                    pct = float(ratio.replace('%', '').strip())
+                    level = '子公司' if pct >= 50 else '参股公司'
+                except ValueError:
+                    level = '参股公司'
+            else:
+                level = '参股公司'
 
             rows.append({
                 '子公司名称': name,
@@ -575,6 +586,17 @@ def map_investments_to_subsidiaries_v2(investments: dict) -> list[dict]:
             '层级': '', '业务板块': '', '持股比例': '', '备注': '',
             '_status': 'yellow',
         })
+
+    # 排序：子公司优先，同层级按持股比例降序
+    def _sort_key(r):
+        is_subsidiary = 0 if r.get('层级') == '子公司' else 1
+        ratio_str = r.get('持股比例', '0').replace('%', '').strip()
+        try:
+            ratio_val = -float(ratio_str)
+        except ValueError:
+            ratio_val = 0
+        return (is_subsidiary, ratio_val)
+    rows.sort(key=_sort_key)
 
     return rows
 
