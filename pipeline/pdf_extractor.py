@@ -1,0 +1,438 @@
+"""
+PDF 募集说明书数据提取器
+========================
+从债券募集说明书/年度报告 PDF 中提取合并资产负债表详细科目，
+补充 QCC API 对 6 个资产负债表科目（短期借款/长期借款/应付债券/
+一年内到期非流动负债/应付票据/应收票据）返回不稳定的缺口。
+
+依赖：pypdfium2（已安装 5.7.1）
+
+用法：
+    from pdf_extractor import download_pdf, extract_balance_sheet, extract_financial_data
+
+    # 下载 PDF
+    pdf_path = download_pdf('https://static.sse.com.cn/.../xxx.pdf', 'sessions/首农/pdf/')
+
+    # 提取资产负债表
+    bs = extract_balance_sheet(pdf_path)
+    # → {'短期借款': {'2022年末': '2,943,294.21', '2021年末': '2,747,111.47', ...}, ...}
+
+    # 或提取完整财务数据（BS + 利润表关键项）
+    fin = extract_financial_data(pdf_path)
+    # → {'balance_sheet': {...}, 'income_statement': {...}}
+
+数据优先级：PDF（完整审计） > QCC（不稳定） > Web Search（兜底）
+"""
+
+import re
+import json
+import urllib.request
+from pathlib import Path
+from collections import OrderedDict
+from typing import Optional
+
+
+# ================================================================
+# PDF 下载
+# ================================================================
+
+def download_pdf(url: str, output_dir: str = 'sessions/_pdf_cache') -> Optional[Path]:
+    """
+    下载 PDF 文件到本地缓存目录。
+
+    Args:
+        url: PDF 下载链接
+        output_dir: 保存目录
+
+    Returns:
+        下载后的文件路径，失败返回 None
+    """
+    try:
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+
+        # 从 URL 提取文件名
+        fname = url.rsplit('/', 1)[-1].split('?')[0]
+        if not fname.endswith('.pdf'):
+            fname = fname + '.pdf'
+        dest = out / fname
+
+        if dest.exists():
+            return dest  # 已缓存
+
+        urllib.request.urlretrieve(url, str(dest))
+        size_kb = dest.stat().st_size // 1024
+        print(f'📥 PDF 已下载: {dest.name} ({size_kb} KB)')
+        return dest
+
+    except Exception as e:
+        print(f'❌ PDF 下载失败: {e}')
+        return None
+
+
+# ================================================================
+# PDF 文本提取
+# ================================================================
+
+def _extract_text_lines(pdf_path) -> list[str]:
+    """用 pypdfium2 提取 PDF 全部文本，返回行列表。"""
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument(str(pdf_path))
+    all_lines = []
+
+    for page_num in range(len(pdf)):
+        page = pdf[page_num]
+        textpage = page.get_textpage()
+        text = textpage.get_text_range()
+        for line in text.split('\n'):
+            line = line.strip()
+            if line:
+                all_lines.append(line)
+
+    return all_lines
+
+
+# ================================================================
+# 资产负债表提取
+# ================================================================
+
+# 资产负债表中需要提取的关键科目
+BS_TARGET_ITEMS = [
+    # 资产类
+    '货币资金', '应收票据', '应收账款', '预付款项', '其他应收款',
+    '存货', '流动资产合计',
+    '长期股权投资', '固定资产', '在建工程', '无形资产',
+    '非流动资产合计', '资产总计',
+    # 负债类
+    '短期借款', '应付票据', '应付账款', '预收款项',
+    '合同负债', '其他应付款',
+    '一年内到期的非流动负债', '其他流动负债',
+    '流动负债合计',
+    '长期借款', '应付债券', '租赁负债', '长期应付款',
+    '非流动负债合计', '负债合计',
+    # 权益类
+    '实收资本', '资本公积', '盈余公积', '未分配利润',
+    '少数股东权益', '所有者权益合计',
+    '负债及所有者权益总计', '负债和所有者权益总计',
+]
+
+# 跳过非科目行（section 标签等）
+BS_SKIP_PATTERNS = [
+    '募集说明书', '年度报告', '审计报告',
+    '项目', '单位：', '流动资产：', '非流动资产：',
+    '流动负债：', '非流动负债：', '所有者权益', '归属于母公司',
+    '北京首农', '发行人', '财务报表',
+]
+
+
+def _is_numeric_cell(val: str) -> bool:
+    """判断字符串是否为数值（含千分位逗号和可选负号）。"""
+    cleaned = val.replace(',', '').replace('-', '0').strip()
+    return bool(re.match(r'^\d+(?:\.\d+)?$', cleaned))
+
+
+def _is_table_header_line(line: str) -> bool:
+    """判断是否为表格列头行（含多个年份列）。"""
+    # 匹配 "2023年9月末" "2023 年 9 月末" "2022年末" 等格式
+    years = re.findall(r'\d{4}\s*年(?:\s*\d{1,2}\s*[月未])?\s*[末]?', line)
+    return len(years) >= 3
+
+
+def _detect_year_columns(lines: list[str]) -> list[str]:
+    """在 PDF 文本行中检测年份列头。"""
+    for line in lines:
+        if _is_table_header_line(line):
+            parts = re.findall(r'\d{4}\s*年(?:\s*\d{1,2}\s*[月未])?\s*[末]?', line)
+            if len(parts) >= 3:
+                # 规范化：去掉空格
+                return [p.replace(' ', '') for p in parts]
+    return []
+
+
+def _identify_full_year_columns(col_names: list[str]) -> list[int]:
+    """
+    识别哪些列是完整年度数据（年末），哪些是中期（月末/季末）。
+    返回完整年度列的索引列表（按原始顺序）。
+
+    规则：
+    - "年末" 或以 "12月31日" 结尾 → 完整年度
+    - "月末" 或其他月份 → 中期数据
+    - 仅年份如 "2023年" → 视为年末
+    """
+    full_year_idx = []
+    for i, col in enumerate(col_names):
+        # "2022年末" or "2022年" → full year
+        if '末' not in col or '年末' in col:
+            full_year_idx.append(i)
+        elif re.search(r'12\s*月\s*31', col):
+            full_year_idx.append(i)
+        # Skip interim: '月末', '6月末', '9月末', etc.
+    return full_year_idx
+
+
+def extract_balance_sheet(pdf_path) -> dict[str, dict[str, str]]:
+    """
+    从 PDF 中提取合并资产负债表。
+
+    返回格式: {科目名: {年份列: 数值}}
+    例如: {'短期借款': {'2022年末': '2,943,294.21', '2021年末': '2,747,111.47'}}
+
+    提取策略：
+    1. 扫描全部文本行，找到资产负债表区域（含"资产负债表"关键词）
+    2. 检测年份列头
+    3. 对每行解析：如果匹配"科目名 + N个数值"模式，则提取
+    """
+    lines = _extract_text_lines(pdf_path)
+
+    # 步骤 1: 定位资产负债表区域
+    bs_start = None
+    bs_end = None
+    for i, line in enumerate(lines):
+        if bs_start is None and ('资产负债表' in line and '合并' in line):
+            bs_start = i
+        if bs_start is not None and bs_end is None:
+            # 利润表开始 = BS 结束
+            if '利润表' in line and '合并' in line and i > bs_start + 50:
+                bs_end = i
+                break
+
+    if bs_start is None:
+        # fallback: 搜索"资产负债表"任意出现
+        for i, line in enumerate(lines):
+            if '资产负债表' in line and '合并' not in line and '影响' not in line:
+                bs_start = i
+                break
+
+    if bs_start is None:
+        print('⚠️  PDF 中未找到合并资产负债表')
+        return {}
+
+    # 确定搜索范围
+    search_start = bs_start
+    search_end = bs_end or min(bs_start + 3000, len(lines))
+
+    # 步骤 2: 检测年份列头
+    col_names = _detect_year_columns(lines[search_start:search_end])
+    if not col_names:
+        print('⚠️  未能识别年份列头')
+        return {}
+
+    num_cols = len(col_names)
+    # 只取完整年度列
+    full_year_idx = _identify_full_year_columns(col_names)
+    if not full_year_idx:
+        full_year_idx = list(range(num_cols))  # fallback: 全部视为年末
+
+    target_cols = [col_names[i] for i in full_year_idx]
+
+    # 步骤 3: 逐行解析
+    result = OrderedDict()
+    for i in range(search_start, search_end):
+        line = lines[i]
+
+        # 跳过非数据行
+        if any(pat in line for pat in BS_SKIP_PATTERNS):
+            continue
+        if _is_table_header_line(line):
+            continue
+
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+
+        # 最后 num_cols 个部分应该是数值
+        if len(parts) < num_cols + 1:
+            continue
+
+        vals_candidate = parts[-num_cols:]
+        name_candidate = ' '.join(parts[:-num_cols])
+
+        # 验证：最后 num_cols 个是否都是数值
+        if not all(_is_numeric_cell(v) for v in vals_candidate):
+            continue
+
+        # 验证：科目名是否在目标列表中（或看起来像科目名）
+        if not any(t in name_candidate for t in BS_TARGET_ITEMS):
+            # 也允许其他看起来像会计科目的中文名
+            if not re.match(r'^[一-鿿]+[一-鿿\s/（）\(\)]*$', name_candidate):
+                continue
+            if len(name_candidate) < 2:
+                continue
+
+        # 提取目标列的值
+        row_data = {}
+        for target_i, col_name in zip(full_year_idx, target_cols):
+            if target_i < len(vals_candidate):
+                row_data[col_name] = vals_candidate[target_i]
+
+        if row_data:
+            result[name_candidate] = row_data
+
+    return result
+
+
+# ================================================================
+# 完整财务数据提取（BS + 关键 P&L 项）
+# ================================================================
+
+# 利润表关键科目
+PL_TARGET_ITEMS = [
+    '营业总收入', '营业收入', '营业成本', '税金及附加',
+    '销售费用', '管理费用', '研发费用', '财务费用',
+    '投资收益', '其他收益', '营业利润', '营业外收入', '营业外支出',
+    '利润总额', '所得税费用', '净利润',
+    '经营活动产生的现金流量净额',
+    '投资活动产生的现金流量净额',
+    '筹资活动产生的现金流量净额',
+]
+
+
+def extract_financial_data(pdf_path) -> dict:
+    """
+    从 PDF 中提取完整财务数据（BS + 利润表关键项）。
+
+    返回: {'balance_sheet': {...}, 'income_statement': {...}, 'columns': [...]}
+    """
+    bs = extract_balance_sheet(pdf_path)
+
+    # P&L 提取（简化版：搜索利润表关键词区域）
+    pl = {}
+    lines = _extract_text_lines(pdf_path)
+
+    pl_start = None
+    for i, line in enumerate(lines):
+        if ('利润表' in line and '合并' in line) or ('利润表' in line and '公司' in line):
+            pl_start = i
+            break
+
+    if pl_start:
+        col_names = _detect_year_columns(lines[pl_start:pl_start + 500])
+        if not col_names:
+            col_names = _detect_year_columns(lines)  # fallback: global search
+
+        num_cols = len(col_names) if col_names else 0
+        if num_cols >= 3:
+            for i in range(pl_start, min(pl_start + 500, len(lines))):
+                line = lines[i]
+                if any(pat in line for pat in ['募集说明书', '项目', '单位：', '利润表', '北京首农']):
+                    continue
+                parts = line.split()
+                if len(parts) < num_cols + 1:
+                    continue
+                vals = parts[-num_cols:]
+                name = ' '.join(parts[:-num_cols])
+                if all(_is_numeric_cell(v) for v in vals):
+                    if any(t in name for t in PL_TARGET_ITEMS):
+                        pl[name] = dict(zip(col_names, vals))
+
+    return {
+        'balance_sheet': bs,
+        'income_statement': pl,
+        'bs_columns': _detect_year_columns(lines) if bs else [],
+    }
+
+
+# ================================================================
+# 骨架映射
+# ================================================================
+
+def map_to_skeleton_columns(
+    pdf_data: dict[str, dict[str, str]],
+    skeleton_year_cols: list[str],
+) -> dict[str, dict[str, str]]:
+    """
+    将 PDF 提取的财务数据映射到骨架的年份列。
+
+    PDF 列名示例: '2022年末', '2021年末', '2020年末'
+    骨架列名示例: '2023年', '2024年', '2025年'
+
+    策略：取 PDF 中最新的 N 个完整年度列，按从旧到新顺序与骨架列一一对应。
+    如果 PDF 年份少于骨架列数，用最接近的年份填充。
+    """
+    if not pdf_data or not skeleton_year_cols:
+        return {}
+
+    # 获取 PDF 列名
+    first_item_vals = list(pdf_data.values())[0] if pdf_data else {}
+    pdf_cols = list(first_item_vals.keys())
+
+    # 提取 PDF 列中的年份数字，按年份排序
+    pdf_col_years = []
+    for col in pdf_cols:
+        m = re.search(r'(\d{4})', col)
+        if m:
+            pdf_col_years.append((int(m.group(1)), col))
+    pdf_col_years.sort(key=lambda x: x[0])  # 升序
+
+    # 提取骨架列中的年份数字
+    sk_years = []
+    for col in skeleton_year_cols:
+        m = re.search(r'(\d{4})', col)
+        if m:
+            sk_years.append(int(m.group(1)))
+
+    # 1:1 映射：PDF 最新 N 个年份 → 骨架 N 个年份
+    n_map = min(len(pdf_col_years), len(sk_years))
+    pdf_subset = pdf_col_years[-n_map:]  # 最新的 N 个 PDF 年份
+    sk_subset = sk_years[-n_map:]        # 骨架中对应的 N 个年份
+
+    year_map = {}
+    for (pdf_year, pdf_col), sk_year in zip(pdf_subset, sk_subset):
+        year_map[sk_year] = pdf_col
+
+    # 对于骨架中较早的年份（PDF 覆盖不到的），用 PDF 最旧的年份填充
+    uncovered = sk_years[:-n_map] if n_map > 0 else sk_years
+    oldest_pdf_col = pdf_col_years[0][1] if pdf_col_years else None
+    for sk_year in uncovered:
+        if oldest_pdf_col:
+            year_map[sk_year] = oldest_pdf_col
+
+    # 构建结果
+    result = {}
+    for item_name, values in pdf_data.items():
+        row = {}
+        for sk_col in skeleton_year_cols:
+            m = re.search(r'(\d{4})', sk_col)
+            if not m:
+                continue
+            sk_year = int(m.group(1))
+            pdf_col = year_map.get(sk_year)
+            if pdf_col and pdf_col in values:
+                val = values[pdf_col]
+                if val and val != '-':
+                    row[sk_col] = val
+        if any(v for v in row.values()):
+            result[item_name] = row
+
+    return result
+
+
+# ================================================================
+# 科目名标准化
+# ================================================================
+
+# PDF 科目名 → 骨架中的标准名
+ITEM_NAME_ALIASES = {
+    '一年内到期的非流动负债': '一年内到期非流动负债',
+    '一年内到期非流动负债': '一年内到期非流动负债',
+    '营业收入': '营业总收入',
+    '一、营业总收入': '营业总收入',
+    '其中：营业收入': '营业总收入',
+    '其中：营业成本': '营业成本',
+    '企业的投资收益': '投资收益',
+    '加：其他收益': '其他收益',
+    '加：营业外收入': '营业外收入',
+    '减：营业外支出': '营业外支出',
+    '减：所得税费用': '所得税费用',
+    '取得投资收益收到的现金': '投资收益',
+}
+
+
+def normalize_item_name(pdf_name: str) -> str:
+    """将 PDF 中的科目名标准化为骨架中的标准名。"""
+    # 先去前缀（中文序号后必须跟标点）
+    clean = re.sub(r'^[一二三四五六七八九十]+[、．.]\s*', '', pdf_name)
+    clean = re.sub(r'^(其中|加|减)[：:]\s*', '', clean)
+    clean = clean.strip()
+    return ITEM_NAME_ALIASES.get(clean, clean)

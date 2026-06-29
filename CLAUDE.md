@@ -107,6 +107,7 @@ QCC MCP APIs (8 core + 4 extension servers, called via pure-Python HTTP/SSE)
 | `pipeline/qcc_client.py` | QCC MCP HTTP client (JSON-RPC + SSE) | `QccClient`, `QccIprClient`, `QccRiskClient`, `QccOperationClient`, `QccExecutiveClient` |
 | `pipeline/qcc_fetch.py` | Orchestrator: skeleton + parallel collection + V2 mapping (~1500 lines) | `fetch_qcc_data(client_name)`, `build_skeleton(client_name)` |
 | `pipeline/web_filler.py` | Search planner (28 plans) + JSON field writer | `load_client_data()`, `save_client_data()`, `fill_field()`, `batch_fill()`, `get_search_plans()`, `get_yellow_fields()` |
+| `pipeline/pdf_extractor.py` | PDF 募集书提取（pypdfium2）→ 资产负债表补充 QCC 缺口 | `download_pdf()`, `extract_balance_sheet()`, `extract_financial_data()`, `map_to_skeleton_columns()` |
 | `pipeline/export.py` | Unified CLI with yellow-field guard | `argparse` CLI: `--client`, `--readback`, `--force`, `--stats`, `--excel-only`, `--html-only` |
 | `pipeline/excel_renderer.py` | JSON → 9-sheet color-coded Excel | `generate_excel(data, output_path)` |
 | `pipeline/excel_reader.py` | Excel → JSON merge (positional match) | `read_excel_changes(excel_path, data)` |
@@ -122,6 +123,7 @@ You are a bank corporate client manager's AI assistant. When asked to generate a
 
 **Completion checklist (all must be ✓ before replying to user):**
 - [ ] Step 1: QCC data collected → 🟢 count > 0
+- [ ] Step 1.5: PDF supplement attempted → balance sheet debt items filled (non-blocking if PDF unavailable)
 - [ ] Step 2: Every 🟡 field searched → 🟡 empty count = 0 (export.py will block otherwise)
 - [ ] Step 3: HTML + Excel files generated → both confirmed on disk
 - [ ] Step 4: Stats and file paths reported to user
@@ -150,6 +152,65 @@ Calls 8 core QCC tools in parallel (registration, shareholders, personnel, finan
 **If exit code 4 with "积分余额不足":** Hard stop. Tell user to recharge QCC credits. Do NOT substitute with web search — the 🟢 foundational data is missing.
 
 **If extension servers report auth errors:** Tell user to run `python oauth_qcc.py auth --resource <server>`. Core data collection continues without them.
+
+### Step 1.5: PDF 募集说明书补充（资产负债表详细科目）
+
+QCC 的 `get_financial_data` 对以下 6 个资产负债表科目返回不稳定：短期借款、长期借款、应付债券、一年内到期非流动负债、应付票据、应收票据。**用债券募集说明书 PDF 补充**——PDF 包含完整审计过的资产负债表，一次性覆盖全部科目。
+
+**数据优先级：PDF（完整审计） > QCC（不稳定） > Web Search（兜底）**
+
+#### 1.5.1 搜索 PDF 链接
+
+用 WebSearch 搜索 SSE 上交所或 chinamoney.com.cn 上企业最新的债券募集说明书：
+
+```
+搜索词: "{企业名称} 募集说明书 PDF site:sse.com.cn"
+搜索词: "{企业名称} 2024 2025 年度 债券 募集说明书"
+```
+
+优先选择：
+- SSE 上交所 PDF（`static.sse.com.cn`）——无反爬限制，可直接下载
+- 最新的募集说明书（含最近年度审计数据）
+- 如果找不到募集书，使用年度报告 PDF
+
+#### 1.5.2 下载并提取
+
+```python
+from pdf_extractor import download_pdf, extract_balance_sheet
+
+# 下载 PDF
+pdf_path = download_pdf('{PDF URL}', 'sessions/{企业名称}/pdf/')
+if not pdf_path:
+    print('⚠️ PDF 下载失败，跳过 PDF 补充')
+
+# 提取资产负债表
+bs_data = extract_balance_sheet(pdf_path)
+```
+
+#### 1.5.3 写入骨架
+
+提取到的数据自动匹配骨架的年份列，然后用 `column_values` 写入：
+
+```python
+from web_filler import batch_fill
+
+if bs_data:
+    # 将 PDF 年份列映射到骨架年份列
+    results = []
+    for item_name, year_values in bs_data.items():
+        results.append({
+            "field": item_name,
+            "column_values": year_values,
+            "source_url": pdf_url,
+            "source_note": "募集说明书PDF提取"
+        })
+    filled = batch_fill('{企业名称}', results)
+    print(f'✅ PDF 补充 {filled} 个财务科目')
+```
+
+**注意：** `extract_balance_sheet()` 返回的 dict key 就是骨架中的 `财务指标` 值（如 `短期借款`、`长期借款`），value 是 `{年份列: 数值}` dict，可直接用于 `column_values`。
+
+**如果 PDF 搜索失败或提取失败：** 继续执行 Step 2 Web Search——那 6 个科目会保持 🟡 状态，由 Web Search 兜底。
 
 ### Step 2: Web Search for 🟡 Fields
 
