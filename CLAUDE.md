@@ -291,10 +291,27 @@ if subs:
                 break
 ```
 
+```python
+# 债券明细写入（替换"公司发行的债券、其他债务融资工具以及偿还情况"表）
+from pdf_extractor import extract_bonds
+
+bonds = extract_bonds(pdf_path)
+if bonds:
+    for ch_val in data['chapters'].get('chapter2', {}).values():
+        for tbl in ch_val.get('tables', []):
+            if '债券' in tbl.get('title', '') and '融资工具' in tbl.get('title', ''):
+                tbl['data'] = bonds
+                print(f'✅ PDF 债券: {len(bonds)} 笔')
+                break
+else:
+    print('⚠️ PDF 未找到债券明细章节，保留骨架占位')
+```
+
 **注意：**
 - `extract_balance_sheet()` 返回的 dict key 是骨架中的 `财务指标` 值，value 是 `{年份列: 数值}` dict
-- `extract_subsidiaries()` 返回的 list 中每项含 `子公司名称`、`层级`、`业务板块`、`持股比例`、`实收资本(万元)`、`备注`，直接对齐骨架表格列名
-- **必须下载完整版募集书**（50MB+），摘要版不含子公司章节
+- `extract_subsidiaries()` 返回的 list 中每项含 `子公司名称`、`层级`、`注册地`、`国标行业`、`业务板块`、`持股比例`、`实收资本(万元)`、`备注`，直接对齐骨架表格列名
+- `extract_bonds()` 返回的 list 中每项含 `债券简称`、`发行主体`、`发行日期`、`到期日期`、`债券期限`、`发行规模(亿元)`、`票面利率(%)`、`余额(亿元)`
+- **必须下载完整版募集书**（50MB+），摘要版不含子公司章节和债券明细
 
 **如果 PDF 搜索失败或提取失败：** 继续执行 Step 2 Web Search——那 6 个科目会保持 🟡 状态，由 Web Search 兜底。
 

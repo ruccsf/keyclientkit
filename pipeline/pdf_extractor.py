@@ -178,6 +178,8 @@ def _extract_text_lines(pdf_path) -> list[str]:
         page = pdf[page_num]
         textpage = page.get_textpage()
         text = textpage.get_text_range()
+        # PDF 换行可能是 \n 或 \r，统一处理
+        text = text.replace('\r\n', '\n').replace('\r', '\n')
         for line in text.split('\n'):
             line = line.strip()
             if line:
@@ -538,10 +540,12 @@ def extract_subsidiaries(pdf_path) -> list[dict]:
             pending = {
                 '子公司名称': name,
                 '层级': '二级子公司',
+                '注册地': location,
+                '国标行业': biz_type,
                 '业务板块': biz_type,
                 '持股比例': ratio,
                 '实收资本(万元)': capital,
-                '备注': f'注册地: {location}' if location else '',
+                '备注': '',
                 '_status': 'green',
             }
             continue
@@ -603,6 +607,156 @@ def extract_subsidiaries(pdf_path) -> list[dict]:
     ]
 
     return subsidiaries
+
+
+# ================================================================
+# 债券明细提取
+# ================================================================
+
+def extract_bonds(pdf_path) -> Optional[list[dict]]:
+    """
+    从募集说明书 PDF 中提取发行人存续债券明细。
+
+    搜索章节: "发行人本部存续债券" / "已发行尚未兑付" / "存续期债券"
+
+    返回: [{'债券简称': '...', '发行主体': '...', '发行日期': '...',
+            '到期日期': '...', '债券期限': '...', '发行规模(亿元)': '...',
+            '票面利率(%)': '...', '余额(亿元)': '...', '_status': 'green'}, ...]
+    找不到则返回 None（保留原骨架）。
+    """
+    lines = _extract_text_lines(pdf_path)
+
+    # 定位债券章节
+    sec_start = None
+    for i, line in enumerate(lines):
+        if any(kw in line for kw in ['发行人本部存续债券', '发行人存续债券',
+                                       '已发行尚未兑付的债券', '已发行尚未到期的债券']):
+            sec_start = i
+            break
+    if sec_start is None:
+        return None
+
+    search_end = min(sec_start + 150, len(lines))
+    bonds = []
+    pending_bond = None
+
+    for i in range(sec_start, search_end):
+        line = lines[i].strip()
+        if not line:
+            continue
+
+        # 序号行
+        m = re.match(r'^(\d{1,2})(?:\s+(.+))?$', line)
+        if m:
+            # 先保存上一条
+            if pending_bond and pending_bond.get('债券简称'):
+                bonds.append(pending_bond)
+
+            rest = (m.group(2) or '').strip()
+            if '小计' in rest or '合计' in rest:
+                pending_bond = None
+                continue
+
+            # 债券简称：拼接序号后的非纯中文、非日期、非纯数字部分
+            if rest:
+                parts = rest.split()
+                name_parts = []
+                for p in parts:
+                    if re.match(r'^\d{4}/\d{2}/\d{2}', p):
+                        break
+                    if re.match(r'^[\d.]+$', p) and len(p) > 3:  # 大数字=规模
+                        break
+                    name_parts.append(p)
+                name = ''.join(name_parts)
+            else:
+                name = ''  # 序号独占一行，名称在续行
+
+            pending_bond = {
+                '债券简称': name,
+                '发行主体': '',
+                '发行日期': '',
+                '到期日期': '',
+                '债券期限': '',
+                '发行规模(亿元)': '',
+                '票面利率(%)': '',
+                '余额(亿元)': '',
+                '_status': 'green',
+            }
+            continue
+
+        # 续行
+        if pending_bond:
+            clean = line.replace('：', ':')
+            if '小计' in clean or '合计' in clean:
+                continue
+
+            # 累加债券简称（跨行拼接: "22 首农食品" + "MTN001" → "22首农食品MTN001"）
+            parts = clean.split()
+            name_parts = []
+            for p in parts:
+                if re.match(r'^\d{4}/\d{2}/\d{2}', p):  # 碰到日期 → 停止
+                    break
+                if re.match(r'^[\d.]+$', p) and len(p) > 3 and '.' in p:  # 发行规模等
+                    break
+                name_parts.append(p)
+            if name_parts:
+                new_name = ''.join(name_parts)
+                if not pending_bond['债券简称']:
+                    pending_bond['债券简称'] = new_name
+                elif not re.search(r'[一-鿿]', new_name):  # 续行是字母数字
+                    pending_bond['债券简称'] = pending_bond['债券简称'] + new_name
+                continue
+
+            parts = clean.split()
+            # 发行主体续行（纯中文）
+            if parts and re.match(r'^[一-鿿]+$', parts[0]) and not pending_bond['发行主体']:
+                pending_bond['发行主体'] = clean
+                continue
+
+            # 数据行: 包含日期格式 YYYY/MM/DD 和数字
+            has_date = bool(re.search(r'\d{4}/\d{2}/\d{2}', clean))
+            nums = [p for p in parts if re.match(r'^[\d.]+$', p.replace(',', ''))]
+
+            if has_date and len(nums) >= 3:
+                # 提取日期
+                dates = re.findall(r'\d{4}/\d{2}/\d{2}', clean)
+                if len(dates) >= 2:
+                    pending_bond['发行日期'] = dates[0]
+                    pending_bond['到期日期'] = dates[-1] if len(dates) > 1 else ''
+                elif dates:
+                    pending_bond['发行日期'] = dates[0]
+
+                # 剩下的数字: 发行规模, 票面利率, 余额（也可能是债券期限）
+                # 格式: 日期1 日期2 期限 规模 利率 余额
+                # 例如: 2022/11/02 - 2025/11/04 3+N 20.00 2.87 20.00
+                non_date_parts = [p for p in parts if not re.match(r'\d{4}/\d{2}/\d{2}', p) and p != '-']
+                # 债券期限: 如 "3+N", "3", "10"
+                term_idx = 0
+                if non_date_parts and re.match(r'^[\d]+[+]?[Nn]?$', non_date_parts[0]):
+                    pending_bond['债券期限'] = non_date_parts[term_idx]
+                    term_idx = 1
+                # 剩下的数值: 规模, 利率, 余额（共3个）
+                remaining_nums = [p for p in non_date_parts[term_idx:] if re.match(r'^[\d.]+$', p)]
+                if len(remaining_nums) >= 3:
+                    pending_bond['发行规模(亿元)'] = remaining_nums[0]
+                    pending_bond['票面利率(%)'] = remaining_nums[1]
+                    pending_bond['余额(亿元)'] = remaining_nums[2]
+                elif len(remaining_nums) >= 2:
+                    pending_bond['发行规模(亿元)'] = remaining_nums[0]
+                    pending_bond['票面利率(%)'] = remaining_nums[1]
+                continue
+
+        # 结束信号
+        if pending_bond and ('偿还' in line or '募集资金' in line):
+            break
+
+    if pending_bond:
+        bonds.append(pending_bond)
+
+    # 过滤：只保留有完整数据的行（至少要有发行日期和规模）
+    bonds = [b for b in bonds if b['发行日期'] and b['发行规模(亿元)'] and re.search(r'[A-Za-z0-9]', b['债券简称'])]
+
+    return bonds if bonds else None
 
 
 # ================================================================
