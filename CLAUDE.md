@@ -155,6 +155,8 @@ Calls 8 core QCC tools in parallel (registration, shareholders, personnel, finan
 
 ### Step 1.5: PDF 募集说明书补充（资产负债表详细科目）
 
+⚠️ **本步骤强制必须执行！** 即使 QCC 返回了全部财务数据，PDF 仍是**子公司注册地/国标行业/实收资本**的唯一来源。
+
 QCC 的 `get_financial_data` 对以下 6 个资产负债表科目返回不稳定：短期借款、长期借款、应付债券、一年内到期非流动负债、应付票据、应收票据。**用债券募集说明书 PDF 补充**——PDF 包含完整审计过的资产负债表，一次性覆盖全部科目。
 
 **数据优先级：PDF（完整审计） > QCC（不稳定） > Web Search（兜底）**
@@ -456,12 +458,21 @@ print(f'✅ 已填充 {filled} 个财务字段')
 4. 所有 6 个字段通常在同一份审计报告资产负债表页面中，一个 WebFetch 即可全部获取
 5. 填充完成后，`save_client_data()` 会自动重算 `付息负债`
 
+**[ ] 强制任务：高管履历搜索**
+
+对高管信息表中的**每一位**高管，逐一搜索并填入履历：
+
+```python
+# 对每位高管执行:
+履历 = WebSearch(f"{高管姓名} {企业名称} {职务} 履历")
+fill_field(data, 高管姓名, content=履历摘要, source_url=...)
+```
+
 **Search rules:**
 - Government/official sources first: gov.cn > ndrc.gov.cn > sasac.gov.cn > industry associations > company website > news
 - Every filled field MUST have a `source_url` (the actual page you opened)
 - **Never fabricate.** If nothing is found, write "经检索未发现公开数据" and leave empty source_url
 - Cross-verify critical fields with 2-3 different search queries
-- **高管履历：** 对高管信息表中的每位高管，搜索 "{姓名} {企业名称} {职务} 履历 任职经历"。将履历摘要填入 `履历` 列（🟡）
 
 ### Step 3: Export Reports (must execute, do not skip)
 
