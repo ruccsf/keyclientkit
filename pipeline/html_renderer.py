@@ -338,15 +338,7 @@ def render_footer(data: dict) -> str:
                         red += 1
 
     return f'''<hr />
-<h2>版本更新日志</h2>
-<table>
-<thead><tr><th>版本</th><th>日期</th><th>更新内容</th><th>更新人</th></tr></thead>
-<tbody>
-<tr><td><strong>{esc(version)}</strong></td><td><strong>{esc(gen_date)}</strong></td><td>数据采集 + 人工核对补充红灯字段</td><td>客户经理 + AI 智能体</td></tr>
-<tr><td>V1.0</td><td>（初版日期）</td><td>初版，基于 AI 智能体搜索公开数据生成</td><td>AI 智能体</td></tr>
-</tbody>
-</table>
-<blockquote><strong>数据统计</strong>：本版报告共 {green + yellow + red} 个数据行，其中 🟢 公开数据 {green} 行，🟡 AI 推断 {yellow} 行，🔴 待人工填写 {red} 行。公开数据来源包括企查查 API、企业官网、公开新闻报道等，建议行内人员复核后使用。</blockquote>
+<blockquote><strong>数据统计</strong>：本版报告共 {green + yellow + red} 个数据行，其中 🟢 公开数据 {green} 行，🟡 AI 推断 {yellow} 行，🔴 待人工填写 {red} 行。</blockquote>
 <div class="footer">由 AI 智能体自动生成 · 数据来源：企查查 API + 公开信息 · 生成时间：{esc(gen_date)}</div>'''
 
 

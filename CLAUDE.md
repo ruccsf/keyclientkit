@@ -273,7 +273,7 @@ if bs_data:
         results.append({
             "field": item_name,
             "column_values": year_values,
-            "source_url": pdf_url,
+            "source_url": str(pdf_path),           # PDF 实际路径（本地文件或下载 URL）
             "source_note": "募集说明书PDF提取"
         })
     filled = batch_fill('{企业名称}', results)

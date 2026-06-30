@@ -498,13 +498,26 @@ def extract_subsidiaries(pdf_path) -> list[dict]:
             parts = rest.split()
 
             # 从后往前解析数值列
+            # 持股比例：≤100 的纯数字（可能带 % 或小数点），不带逗号
+            # 实收资本：大额数字，通常带逗号
             ratio = ''
             capital = ''
-            # 检查最后是否持股比例
-            if parts and re.match(r'^[\d.]+%?$', parts[-1]):
-                ratio = parts.pop()
-            if parts and re.match(r'^[\d,]+(?:\.\d+)?$', parts[-1].replace(',', '')):
-                capital = parts.pop()
+            for _ in range(2):  # 最多尝试提取 2 个尾部数值
+                if not parts:
+                    break
+                val = parts[-1]
+                val_clean = val.replace(',', '').replace('%', '')
+                if not re.match(r'^[\d.]+$', val_clean):
+                    break
+                num = float(val_clean)
+                # 持股比例：≤100 且不带逗号（排除大额实收资本）
+                if num <= 100 and ',' not in val and not capital and not ratio:
+                    ratio = parts.pop()
+                # 实收资本：带逗号的大额数字 或 >100
+                elif (',' in val or num > 100) and not capital:
+                    capital = parts.pop()
+                else:
+                    break
 
             # 剩余: 企业名 + 经营地 + 业务性质
             locations = {'北京','上海','天津','香港','深圳','广州','河北','浙江','江苏','西藏'}
@@ -541,16 +554,25 @@ def extract_subsidiaries(pdf_path) -> list[dict]:
                 pending['持股比例'] = (pending['持股比例'] + ' / ' + clean) if pending['持股比例'] else clean
             # 混合续行: "服务等 200,000.00 100.00" → 业务 + 资本 + 比例
             elif re.search(r'\d', clean):
-                # 尝试从后往前拆分数字
                 parts = clean.split()
                 extracted_ratio = ''
                 extracted_capital = ''
-                if parts and re.match(r'^[\d.]+%?$', parts[-1]):
-                    extracted_ratio = parts.pop()
-                if parts and re.match(r'^[\d,]+(?:\.\d+)?$', parts[-1].replace(',', '')):
-                    extracted_capital = parts.pop()
+                # 从后往前，用数值特征区分：≤100 无逗号=比例，大额/带逗号=资本
+                for _ in range(len(parts)):
+                    if not parts:
+                        break
+                    val = parts[-1]
+                    val_clean = val.replace(',', '').replace('%', '')
+                    if not re.match(r'^[\d.]+$', val_clean):
+                        break
+                    num = float(val_clean)
+                    if num <= 100 and ',' not in val and not extracted_capital and not extracted_ratio:
+                        extracted_ratio = parts.pop()
+                    elif (',' in val or num > 100) and not extracted_capital:
+                        extracted_capital = parts.pop()
+                    else:
+                        break
                 biz_rest = ' '.join(parts)
-                # 合并到 pending
                 if extracted_ratio and not pending['持股比例']:
                     pending['持股比例'] = extracted_ratio
                 if extracted_capital and not pending['实收资本(万元)']:
@@ -570,11 +592,14 @@ def extract_subsidiaries(pdf_path) -> list[dict]:
     if pending:
         subsidiaries.append(pending)
 
-    # 质量过滤：移除无效行（名称含数字%、名称过短等）
+    # 质量过滤：移除无效行
     subsidiaries = [
         s for s in subsidiaries
         if not re.search(r'\d+\.?\d*%', s['子公司名称'])  # 不含百分比
         and len(s['子公司名称']) >= 4  # 名称至少4个字
+        and '募集说明书' not in s.get('业务板块', '')  # 排除页眉混入
+        and '序号' not in s.get('业务板块', '')  # 排除表头混入
+        and '联营企业' not in s.get('业务板块', '')  # 排除章节标题混入
     ]
 
     return subsidiaries

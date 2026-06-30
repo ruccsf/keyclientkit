@@ -1492,9 +1492,9 @@ def fetch_qcc_data(client_name: str, tools_filter: list = None) -> dict:
             rev = _yuan_to_wan(pl.get('营业总收入', ''))
             prf = _yuan_to_wan(pl.get('净利润', ''))
             if rev:
-                revenue_parts.append(f'{period}年 {rev}')
+                revenue_parts.append(f'{period}年 {rev}万元')
             if prf:
-                profit_parts.append(f'{period}年 {prf}')
+                profit_parts.append(f'{period}年 {prf}万元')
     revenue_val = '  |  '.join(revenue_parts) if revenue_parts else ''
     profit_val = '  |  '.join(profit_parts) if profit_parts else ''
 
