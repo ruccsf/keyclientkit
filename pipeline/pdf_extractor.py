@@ -193,7 +193,89 @@ def _extract_text_lines(pdf_path) -> list[str]:
 
 
 # ================================================================
-# 资产负债表提取
+# AI 阅读辅助：定位章节 + 提取页面文本
+# ================================================================
+
+# 各数据类型的章节关键词
+SECTION_KEYWORDS = {
+    'balance_sheet': ['合并资产负债表', '资产负债表'],
+    'income_statement': ['合并利润表', '利润表'],
+    'subsidiaries': ['主要子公司', '纳入合并报表范围', '二级子公司'],
+    'bonds': ['存续债券', '已发行尚未兑付', '债务融资工具', '发行人本部存续'],
+}
+
+
+def find_section_pages(pdf_path) -> dict[str, list[int]]:
+    """
+    扫描 PDF，定位各类数据所在的页码范围。
+
+    返回: {'balance_sheet': [14,15,16], 'subsidiaries': [286,287], 'bonds': [109,110], ...}
+    找不到的类型不会出现在返回 dict 中。
+    """
+    lines = _extract_text_lines(pdf_path)
+    result = {}
+
+    for section_name, keywords in SECTION_KEYWORDS.items():
+        pages = set()
+        for kw in keywords:
+            for i, line in enumerate(lines):
+                if kw in line:
+                    # 估算行号→页码（按每页 45 行估算）
+                    page = i // 45 + 1
+                    pages.add(page)
+        if pages:
+            # 聚类：将连续页码合并为范围
+            sorted_pages = sorted(pages)
+            clusters = []
+            cluster_start = sorted_pages[0]
+            cluster_end = sorted_pages[0]
+            for p in sorted_pages[1:]:
+                if p <= cluster_end + 2:  # 间隔不超过2页视为连续
+                    cluster_end = p
+                else:
+                    clusters.append((cluster_start, cluster_end))
+                    cluster_start = p
+                    cluster_end = p
+            clusters.append((cluster_start, cluster_end))
+            # 取最大的那个 cluster（通常就是正文中的章节）
+            best = max(clusters, key=lambda c: c[1] - c[0])
+            result[section_name] = list(range(best[0], best[1] + 1))
+
+    return result
+
+
+def extract_pages_text(pdf_path, page_range: list[int]) -> str:
+    """
+    提取指定页面的纯文本，供 AI 阅读和解析。
+
+    Args:
+        pdf_path: PDF 文件路径
+        page_range: 页码列表（1-based），如 [14, 15, 16]
+
+    Returns:
+        合并后的纯文本（页面间用分隔线隔开）
+    """
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument(str(pdf_path))
+    total = len(pdf)
+    chunks = []
+
+    for pg in page_range:
+        if pg < 1 or pg > total:
+            continue
+        page = pdf[pg - 1]
+        textpage = page.get_textpage()
+        text = textpage.get_text_range()
+        text = text.replace('\r\n', '\n').replace('\r', '\n')
+        if text.strip():
+            chunks.append(f'--- 第 {pg} 页 ---\n{text.strip()}')
+
+    return '\n\n'.join(chunks)
+
+
+# ================================================================
+# 资产负债表提取（保留旧函数，标记为 deprecated）
 # ================================================================
 
 # 资产负债表中需要提取的关键科目

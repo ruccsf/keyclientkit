@@ -247,19 +247,49 @@ cached = find_cached_pdf('{企业名称}')
 无论 PDF 来自哪种情况（用户拖入/缓存/上传/搜索下载），后续提取流程一致：
 
 ```python
-from pdf_extractor import extract_balance_sheet, extract_subsidiaries
+from pdf_extractor import find_section_pages, extract_pages_text
 
 if not pdf_path:
     print('⚠️ 未获取到 PDF，跳过 PDF 补充')
 
-# 提取资产负债表
-bs_data = extract_balance_sheet(pdf_path)
-
-# 提取二级子公司列表（完整版募集书才有，摘要版不包含）
-subs = extract_subsidiaries(pdf_path)
+# 步骤 1: 定位章节页码
+sections = find_section_pages(pdf_path)
 ```
 
+**步骤 2: AI 阅读文本并提取数据**
+
+对每个需要的章节，提取页面文本后用你的阅读能力解析：
+
+```python
+# 资产负债表（含短期借款/长期借款/应付债券等全部科目）
+if 'balance_sheet' in sections:
+    bs_text = extract_pages_text(pdf_path, sections['balance_sheet'])
+    # → 阅读 bs_text，从中提取每行"科目名 + 各年数值"
+    # → 输出格式: {"短期借款": {"2023年": "xxx", "2024年": "xxx", ...}, ...}
+
+# 二级子公司列表
+if 'subsidiaries' in sections:
+    sub_text = extract_pages_text(pdf_path, sections['subsidiaries'])
+    # → 阅读 sub_text，从中提取每行"企业名 + 经营地 + 业务性质 + 资本 + 持股比例"
+    # → 输出格式: [{"子公司名称": "...", "层级": "二级子公司", "注册地": "...", ...}, ...]
+
+# 债券明细
+if 'bonds' in sections:
+    bond_text = extract_pages_text(pdf_path, sections['bonds'])
+    # → 阅读 bond_text，从中提取每行"债券简称 + 发行规模 + 利率 + 到期日 ..."
+    # → 输出格式: [{"债券简称": "...", "发行规模(亿元)": "...", ...}, ...]
+```
+
+**AI 解析原则：**
+- 阅读整个文本块，理解表格结构（不要用正则逐行拆）
+- 提取精确数值，跳过无关行（页眉/表头/小计/合计）
+- 如果表格跨多页，注意合并同名科目
+- 找不到某类数据就跳过，不强行填充
+- 提取结果存入变量：`bs_data`（资产负债表）、`subs`（子公司列表）、`bonds`（债券明细）
+
 #### 1.5.3 写入骨架
+
+无论数据来自 Python regex 还是 AI 阅读，写入逻辑一致：
 
 提取到的数据自动匹配骨架的年份列，然后用 `column_values` 写入：
 
