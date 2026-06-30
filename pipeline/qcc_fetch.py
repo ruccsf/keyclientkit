@@ -548,7 +548,7 @@ def map_investments_to_subsidiaries_v2(investments: dict) -> list[dict]:
         items = investments
 
     rows = []
-    for item in items[:80]:
+    for item in items:
         if isinstance(item, dict):
             name = _s(item.get('被投资企业名称', item.get('企业名称', item.get('name', ''))))
             ratio = _s(item.get('持股比例', item.get('ratio', '')))
@@ -558,17 +558,7 @@ def map_investments_to_subsidiaries_v2(investments: dict) -> list[dict]:
                 continue
 
             # 推断层级
-            if '100' in ratio or '全资' in _s(item.get('与集团关系', '')):
-                level = '子公司'
-            elif ratio:
-                # 尝试解析数值：>50% 为控股子公司
-                try:
-                    pct = float(ratio.replace('%', '').strip())
-                    level = '子公司' if pct >= 50 else '参股公司'
-                except ValueError:
-                    level = '参股公司'
-            else:
-                level = '参股公司'
+            level = '子公司' if ('100' in ratio or '全资' in _s(item.get('与集团关系', ''))) else '参股公司'
 
             rows.append({
                 '子公司名称': name,
