@@ -317,21 +317,22 @@ if bs_data:
         results.append({
             "field": item_name,
             "column_values": year_values,
-            "source_url": str(pdf_path),           # PDF 实际路径（本地文件或下载 URL）
+            "source_url": str(pdf_path.resolve()),  # PDF 绝对路径（浏览器可打开）
             "source_note": "募集说明书PDF提取"
         })
     filled = batch_fill('{企业名称}', results)
     print(f'✅ PDF 补充 {filled} 个财务科目')
 
-# 子公司列表写入（直接替换骨架中的"在京企业架构 / 子公司列表"表数据）
+# ⚠️ 子公司必须从 PDF 提取，不能用 QCC 数据！QCC 只有持股比例，缺少注册地/国标行业/业务板块
+# 步骤: AI 从 PDF 子公司章节文本解析出 subs 列表 → 直接替换骨架整张表
 if subs:
     for ch_val in data['chapters'].get('chapter2', {}).values():
         for tbl in ch_val.get('tables', []):
             if '子公司列表' in tbl.get('title', ''):
-                # 清洗：移除不规范条目
                 clean_subs = [s for s in subs if '公司' in s.get('子公司名称', '')]
-                tbl['data'] = clean_subs
-                print(f'✅ PDF 子公司: {len(clean_subs)} 家')
+                if clean_subs:
+                    tbl['data'] = clean_subs
+                    print(f'✅ PDF 子公司: {len(clean_subs)} 家（已替换QCC数据）')
                 break
 ```
 

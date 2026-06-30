@@ -225,10 +225,15 @@ def render_table(tbl: dict, table_index: int) -> str:
                         # 数据来源列：显示简写+可点击链接
                         if url.startswith('http'):
                             domain = re.sub(r'^https?://(?:www\.)?([^/]+).*', r'\1', url)
+                            href = url
                         else:
-                            # 本地文件路径 → 只显示文件名
+                            # 本地文件路径 → 只显示文件名，加 file:/// 前缀让浏览器可打开
                             domain = url.replace('\\', '/').rsplit('/', 1)[-1]
-                        html += f'<td style="font-size:11px"><a href="{esc(url)}" target="_blank" title="{esc(url)}">{esc(domain)}</a></td>'
+                            # 转为绝对路径 + file:// 协议
+                            from pathlib import Path
+                            abs_path = str(Path(url).resolve())
+                            href = 'file:///' + abs_path.replace('\\', '/')
+                        html += f'<td style="font-size:11px"><a href="{esc(href)}" target="_blank" title="{esc(url)}">{esc(domain)}</a></td>'
                     else:
                         html += '<td></td>'
                 continue
