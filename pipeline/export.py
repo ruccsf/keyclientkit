@@ -271,9 +271,9 @@ if __name__ == '__main__':
             print(f'📁 已选择: {output_dir.absolute()}')
         cmd_readback(client, output_dir=output_dir)
     else:
-        # 导出：先生成所有产物再写盘，对话框只弹一次
         if output_dir is None:
-            print('📁 正在打开保存位置选择对话框...')
+            print('📁 报告即将生成（Excel 核对表 + HTML 报告），请选择保存位置...')
+            print('   （直接点确定使用默认 output/ 目录）')
             output_dir = _pick_output_dir()
         if output_dir is not None:
             print(f'📁 已选择: {output_dir.absolute()}')
