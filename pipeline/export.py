@@ -139,6 +139,25 @@ def _check_subsidiary_pdf_data(data: dict) -> int:
     return empty_count
 
 
+def _check_executive_resumes(data: dict) -> int:
+    """检查高管表中履历列是否已填充。返回履历为空的人数。"""
+    empty_count = 0
+    for ch_val in data.get('chapters', {}).values():
+        if not isinstance(ch_val, dict):
+            continue
+        for sec_val in ch_val.values():
+            if not isinstance(sec_val, dict):
+                continue
+            for tbl in sec_val.get('tables', []):
+                if '高管' not in tbl.get('title', ''):
+                    continue
+                for row in tbl.get('data', []):
+                    履历 = str(row.get('履历', '')).strip()
+                    if not 履历:
+                        empty_count += 1
+    return empty_count
+
+
 def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
                output_dir: Path = None) -> dict:
     """导出 Excel + HTML。output_dir 必须由调用方在生成前确定（只弹一次对话框）。"""
@@ -176,6 +195,19 @@ def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
         print(f'⚠️  --force: 跳过子公司 PDF 数据检查（{empty_subs} 家无注册地/国标行业）')
     else:
         print(f'✅ 子公司 PDF 数据已填充')
+
+    # 高管履历检查：🟡 履历列必须已搜索
+    empty_resumes = _check_executive_resumes(data)
+    if empty_resumes > 0 and not force:
+        print()
+        print(f'❌ 高管表缺少履历：{empty_resumes} 位高管的履历列为空')
+        print(f'   请先完成 Step 2 高管履历搜索')
+        print(f'   强制导出: python pipeline/export.py --client {client_name} --force')
+        sys.exit(1)
+    elif empty_resumes > 0 and force:
+        print(f'⚠️  --force: 跳过履历检查（{empty_resumes} 位高管履历为空）')
+    else:
+        print(f'✅ 高管履历已填充')
 
     if output_dir is None:
         output_dir = OUTPUT_DIR
