@@ -207,8 +207,16 @@ def write_chapter_sheet(wb: Workbook, ch_key: str, ch_data: dict, ch_name: str):
 
                 for ci, col_name in enumerate(display_cols, 1):
                     val = clean_for_excel(drow.get(col_name, ''))
+                    # 🔴 红灯空单元格 → 灰色 placeholder
+                    if st == 'red' and not str(val).strip():
+                        val = '（待填写）'
+                        placeholder_font = Font(color='999999', italic=True)
+                    else:
+                        placeholder_font = None
                     c = ws.cell(row=row, column=ci, value=val)
                     c.fill = fill; c.border = THIN_BORDER
+                    if placeholder_font:
+                        c.font = placeholder_font
                     # 数字/金额列右对齐，首列（标签列）保持左对齐
                     is_num = ci > 1 and bool(re.match(r'^-?[\d,]+(?:\.\d+)?%?$', str(val).strip()))
                     c.alignment = RIGHT if is_num else WRAP

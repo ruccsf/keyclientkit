@@ -238,10 +238,14 @@ def render_table(tbl: dict, table_index: int) -> str:
                         html += '<td></td>'
                 continue
             val = str(row.get(h, '')) if row.get(h) is not None else ''
+            # 🔴 红灯空单元格 → 灰色 placeholder
+            is_red_empty = (status == 'red' and not val.strip() and not first)
             if first:
                 clean_val = _strip_emoji(val)
                 html += f'<td><strong>{icon} {format_cell(clean_val)}</strong></td>'
                 first = False
+            elif is_red_empty:
+                html += '<td style="color:#bbb;font-style:italic;">（待填写）</td>'
             else:
                 align = 'text-align:right;' if _is_numeric(val) else ''
                 html += f'<td style="{align}">{format_cell(val)}</td>'
