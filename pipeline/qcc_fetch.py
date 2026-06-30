@@ -346,10 +346,11 @@ def map_personnel_to_executives_v2(personnel: dict) -> list[dict]:
             rows.append({
                 '职务': position,
                 '姓名': name,
+                '履历': '',
                 '联系方式': '',
                 '备注': f'企查查 API: get_key_personnel（共{len(items)}人）',
                 '_status': 'green',
-                '_column_status': {'职务': 'green', '姓名': 'green', '联系方式': 'red', '备注': 'green'},
+                '_column_status': {'职务': 'green', '姓名': 'green', '履历': 'yellow', '联系方式': 'red', '备注': 'green'},
             })
     return rows
 
@@ -489,6 +490,7 @@ def map_financial_to_table_v2(finance: dict, annual_reports: dict = None) -> lis
     priority_keys = [
         # 计息负债相关（最前面）
         '短期借款', '长期借款', '应付债券', '一年内到期非流动负债',
+        '一年内到期的应付债券', '一年内到期的长期借款',  # 🔴 需行内拆分
         '付息负债',
         '应付票据', '应收票据',
         # 原有核心财务指标
@@ -496,6 +498,9 @@ def map_financial_to_table_v2(finance: dict, annual_reports: dict = None) -> lis
         '所有者权益总计', '经营活动产生的现金流', '资产负债率',
         '净利率', '毛利率', '流动比率', '速动比率',
     ]
+
+    # 需行内拆分的明细科目 → 标记为 🔴
+    red_keys = {'一年内到期的应付债券', '一年内到期的长期借款'}
 
     rows = []
     for key in priority_keys:
@@ -511,13 +516,14 @@ def map_financial_to_table_v2(finance: dict, annual_reports: dict = None) -> lis
             rows.append(row)
             del indicators[key]
         else:
-            # QCC 未返回 → 🟡 占位行，留待 Web Search 填充
+            # QCC 未返回 → 🟡 占位行（或 🔴 需行内填写）
+            status = 'red' if key in red_keys else 'yellow'
             row = {
                 '财务指标': key,
                 col_1: '',
                 col_2: '',
                 col_3: '',
-                '_status': 'yellow',
+                '_status': status,
             }
             rows.append(row)
 
@@ -670,9 +676,9 @@ def build_skeleton(client_name: str) -> dict:
                         'title': '高管信息',
                         'type': 'list',
                         'data': [
-                            {'职务': '(待QCC数据)', '姓名': '', '联系方式': '', '备注': '数据采集后自动填充', '_status': 'yellow'},
+                            {'职务': '(待QCC数据)', '姓名': '', '履历': '', '联系方式': '', '备注': '数据采集后自动填充', '_status': 'yellow'},
                         ],
-                        '_columns_brief': '职务🟢 | 姓名🟢 | 联系方式🔴 | 备注🟡',
+                        '_columns_brief': '职务🟢 | 姓名🟢 | 履历🟡 | 联系方式🔴 | 备注🟢',
                     },
                     {
                         'title': '经营情况《★》',
