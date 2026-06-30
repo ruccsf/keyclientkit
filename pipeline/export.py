@@ -15,16 +15,17 @@ from pathlib import Path
 from datetime import datetime
 
 
-_dialog_shown = False  # 单次锁：防止重复弹窗
-
 def _pick_output_dir() -> Path:
     """弹出系统对话框让用户选择保存位置。仅在交互式环境弹窗，否则回退默认 output/。"""
-    global _dialog_shown
-
     # 非桌面环境（AI agent / 远程终端 / CI）跳过弹窗，直接回退
     _no_gui = os.environ.get('WORKBUDDY_AGENT') or os.environ.get('CI') or os.environ.get('SSH_CLIENT')
-    if _no_gui or _dialog_shown:
+    if _no_gui:
         return OUTPUT_DIR
+
+    # 跨进程单次锁：同 session 只弹一次（AI 可能多次调用 export.py）
+    if os.environ.get('_KEYCLIENTKIT_DIALOG_SHOWN'):
+        return OUTPUT_DIR
+    os.environ['_KEYCLIENTKIT_DIALOG_SHOWN'] = '1'
 
     try:
         import tkinter as tk
