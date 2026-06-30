@@ -119,6 +119,26 @@ def _check_yellow_fields(data: dict) -> int:
     return empty_yellows, total_yellows
 
 
+def _check_subsidiary_pdf_data(data: dict) -> int:
+    """检查子公司表中是否有 PDF 数据（注册地、国标行业非空）。返回缺失行数。"""
+    empty_count = 0
+    for ch_val in data.get('chapters', {}).values():
+        if not isinstance(ch_val, dict):
+            continue
+        for sec_val in ch_val.values():
+            if not isinstance(sec_val, dict):
+                continue
+            for tbl in sec_val.get('tables', []):
+                if '子公司列表' not in tbl.get('title', ''):
+                    continue
+                for row in tbl.get('data', []):
+                    注册地 = str(row.get('注册地', '')).strip()
+                    国标行业 = str(row.get('国标行业', '')).strip()
+                    if not 注册地 and not 国标行业:
+                        empty_count += 1
+    return empty_count
+
+
 def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
                output_dir: Path = None) -> dict:
     """导出 Excel + HTML。output_dir 必须由调用方在生成前确定（只弹一次对话框）。"""
@@ -143,6 +163,19 @@ def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
         print(f'⚠️  --force: 跳过 🟡 字段检查（{empty_yellows}/{total_yellows} 个未搜索）')
     elif total_yellows > 0:
         print(f'✅ 🟡 字段已全部搜索（{total_yellows} 行）')
+
+    # 子公司 PDF 数据检查：注册地/国标行业必须已填充
+    empty_subs = _check_subsidiary_pdf_data(data)
+    if empty_subs > 0 and not force:
+        print()
+        print(f'❌ 子公司表缺少 PDF 数据：{empty_subs} 家子公司的注册地/国标行业为空')
+        print(f'   请先完成 Step 1.5 PDF 募集书补充（子公司数据唯一来源）')
+        print(f'   强制导出: python pipeline/export.py --client {client_name} --force')
+        sys.exit(1)
+    elif empty_subs > 0 and force:
+        print(f'⚠️  --force: 跳过子公司 PDF 数据检查（{empty_subs} 家无注册地/国标行业）')
+    else:
+        print(f'✅ 子公司 PDF 数据已填充')
 
     if output_dir is None:
         output_dir = OUTPUT_DIR
