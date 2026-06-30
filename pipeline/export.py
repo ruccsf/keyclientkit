@@ -15,23 +15,27 @@ from pathlib import Path
 from datetime import datetime
 
 
+_dialog_shown = False  # 单次锁：防止重复弹窗
+
 def _pick_output_dir() -> Path:
     """弹出系统对话框让用户选择保存位置。仅交互式环境弹窗，否则回退默认 output/。"""
-    # 非交互式环境（AI agent / 管道）直接回退
+    global _dialog_shown
     if not sys.stdin.isatty():
         return OUTPUT_DIR
+    if _dialog_shown:
+        return OUTPUT_DIR  # 已弹过窗，不再弹
 
     try:
         import tkinter as tk
         from tkinter import filedialog
         root = tk.Tk()
         root.withdraw()
-        root.attributes('-topmost', True)
         chosen = filedialog.askdirectory(
-            title='选择报告保存位置',
+            title='选择报告保存位置（Excel + HTML）',
             initialdir=str(OUTPUT_DIR),
         )
         root.destroy()
+        _dialog_shown = True
         if chosen:
             return Path(chosen)
     except Exception:
