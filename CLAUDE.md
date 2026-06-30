@@ -247,10 +247,13 @@ cached = find_cached_pdf('{企业名称}')
 无论 PDF 来自哪种情况（用户拖入/缓存/上传/搜索下载），后续提取流程一致：
 
 ```python
-from pdf_extractor import find_section_pages, extract_pages_text
+from pdf_extractor import cache_pdf, find_section_pages, extract_pages_text
 
 if not pdf_path:
     print('⚠️ 未获取到 PDF，跳过 PDF 补充')
+
+# ⚠️ 必须先缓存！确保 source_url 使用缓存后的短路径
+pdf_path = cache_pdf(str(pdf_path), '{企业名称}')
 
 # 步骤 1: 定位章节页码
 sections = find_section_pages(pdf_path)
@@ -286,6 +289,17 @@ if 'bonds' in sections:
 - 如果表格跨多页，注意合并同名科目
 - 找不到某类数据就跳过，不强行填充
 - 提取结果存入变量：`bs_data`（资产负债表）、`subs`（子公司列表）、`bonds`（债券明细）
+
+**⚠️ 红灯保护：** `_status=='red'` 的行（如"一年内到期的应付债券""一年内到期的长期借款"）是行内需拆分数据，**禁止从 PDF 填充**。写入前检查骨架中该行的 `_status` 是否为 red，若是则跳过。
+
+**⚠️ 年份映射：** PDF 的年份列（如 2024年末/2023年末）和骨架列（如 2025年/2024年/2023年）可能不一致。写入前必须调用 `map_to_skeleton_columns()` 对齐：
+
+```python
+from pdf_extractor import map_to_skeleton_columns
+# 从骨架中获取年份列名
+skeleton_cols = ['2023年', '2024年', '2025年']  # 实际从骨架读取
+bs_mapped = map_to_skeleton_columns(bs_data, skeleton_cols)
+```
 
 #### 1.5.3 写入骨架
 
@@ -420,6 +434,7 @@ print(f'✅ 已填充 {filled} 个财务字段')
 - Every filled field MUST have a `source_url` (the actual page you opened)
 - **Never fabricate.** If nothing is found, write "经检索未发现公开数据" and leave empty source_url
 - Cross-verify critical fields with 2-3 different search queries
+- **高管履历：** 对高管信息表中的每位高管，搜索 "{姓名} {企业名称} {职务} 履历 任职经历"。将履历摘要填入 `履历` 列（🟡）
 
 ### Step 3: Export Reports (must execute, do not skip)
 

@@ -222,8 +222,12 @@ def render_table(tbl: dict, table_index: int) -> str:
                 if has_source:
                     url = row.get('_source_url', '')
                     if url:
-                        # 数据来源列：显示域名简写+可点击链接
-                        domain = re.sub(r'^https?://(?:www\.)?([^/]+).*', r'\1', url) if url else ''
+                        # 数据来源列：显示简写+可点击链接
+                        if url.startswith('http'):
+                            domain = re.sub(r'^https?://(?:www\.)?([^/]+).*', r'\1', url)
+                        else:
+                            # 本地文件路径 → 只显示文件名
+                            domain = url.replace('\\', '/').rsplit('/', 1)[-1]
                         html += f'<td style="font-size:11px"><a href="{esc(url)}" target="_blank" title="{esc(url)}">{esc(domain)}</a></td>'
                     else:
                         html += '<td></td>'
