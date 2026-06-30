@@ -25,6 +25,7 @@ PDF 募集说明书数据提取器
 """
 
 import re
+import sys
 import json
 import urllib.request
 from pathlib import Path
@@ -68,6 +69,98 @@ def download_pdf(url: str, output_dir: str = 'sessions/_pdf_cache') -> Optional[
     except Exception as e:
         print(f'❌ PDF 下载失败: {e}')
         return None
+
+
+# ================================================================
+# PDF 缓存管理
+# ================================================================
+
+# 全局缓存目录（项目根目录下）
+_CACHE_DIR = Path(__file__).parent.parent / 'sessions'
+
+# 技能工作空间下的共享缓存
+_WORKSPACE_CACHE = Path(__file__).parent.parent / '_pdf_cache'
+
+
+def find_cached_pdf(client_name: str) -> Optional[Path]:
+    """
+    检查是否有该企业的募集书 PDF 缓存。
+
+    优先级：
+    1. sessions/{client_name}/pdf/ 下的 PDF
+    2. _pdf_cache/ 下的共享缓存
+    """
+    # 每个企业的独立缓存
+    client_dir = _CACHE_DIR / client_name / 'pdf'
+    if client_dir.exists():
+        pdfs = sorted(client_dir.glob('*.pdf'))
+        if pdfs:
+            return pdfs[0]  # 返回最新的（按文件名排序）
+
+    # 工作空间共享缓存
+    if _WORKSPACE_CACHE.exists():
+        # 搜索文件名含企业名的 PDF
+        for pdf in sorted(_WORKSPACE_CACHE.glob('*.pdf'), reverse=True):
+            if client_name[:4] in pdf.stem or any(c in pdf.stem for c in client_name[:4]):
+                return pdf
+
+    return None
+
+
+def cache_pdf(src_path: str, client_name: str) -> Path:
+    """
+    将 PDF 复制到企业缓存目录，返回缓存路径。
+    如果源文件已在缓存目录中，直接返回。
+    """
+    src = Path(src_path)
+    if not src.exists():
+        raise FileNotFoundError(f'PDF 文件不存在: {src_path}')
+
+    dest_dir = _CACHE_DIR / client_name / 'pdf'
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    # 如果源文件已在目标目录，直接返回
+    if dest_dir in src.parents or str(src.parent) == str(dest_dir):
+        return src
+
+    dest = dest_dir / src.name
+    if dest.exists():
+        # 如果已存在同名文件，追加时间戳
+        import time
+        ts = time.strftime('%Y%m%d_%H%M%S')
+        dest = dest_dir / f'{src.stem}_{ts}{src.suffix}'
+
+    import shutil
+    shutil.copy2(src, dest)
+    print(f'📋 PDF 已缓存: {dest.relative_to(_CACHE_DIR.parent)}')
+    return dest
+
+
+def ask_pdf_path() -> Optional[str]:
+    """
+    弹出系统文件对话框，让用户选择 PDF 文件。
+    仅交互式环境弹窗（AI agent 模式回退返回 None）。
+    """
+    if not sys.stdin.isatty():
+        return None
+
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        chosen = filedialog.askopenfilename(
+            title='选择募集说明书 PDF',
+            filetypes=[('PDF 文件', '*.pdf'), ('所有文件', '*.*')],
+        )
+        root.destroy()
+        if chosen:
+            print(f'📁 已选择: {chosen}')
+            return chosen
+    except Exception:
+        pass
+    return None
 
 
 # ================================================================
@@ -123,6 +216,7 @@ BS_SKIP_PATTERNS = [
     '项目', '单位：', '流动资产：', '非流动资产：',
     '流动负债：', '非流动负债：', '所有者权益', '归属于母公司',
     '北京首农', '发行人', '财务报表',
+    '金额 占比', '金额  占比',  # 双列表格子头
 ]
 
 
@@ -188,21 +282,34 @@ def extract_balance_sheet(pdf_path) -> dict[str, dict[str, str]]:
     # 步骤 1: 定位资产负债表区域
     bs_start = None
     bs_end = None
+
+    # 策略 1: 搜索"合并资产负债表"章节标题（跳过会计政策注释和表头）
     for i, line in enumerate(lines):
         if bs_start is None and ('资产负债表' in line and '合并' in line):
+            # 跳过会计政策注释/表头: "影响", "项目", "报表数" 等
+            skip_words = ['影响', '执行', '会计政策', '报表数', '项目']
+            if any(w in line for w in skip_words) or len(line) < 10:
+                continue
             bs_start = i
         if bs_start is not None and bs_end is None:
-            # 利润表开始 = BS 结束
             if '利润表' in line and '合并' in line and i > bs_start + 50:
                 bs_end = i
                 break
 
+    # 策略 2: fallback — 搜索含年份列头+BS特征科目的表格区域
+    # 优先级: 合并资产负债表 > 母公司资产负债表
     if bs_start is None:
-        # fallback: 搜索"资产负债表"任意出现
+        candidates = []
         for i, line in enumerate(lines):
-            if '资产负债表' in line and '合并' not in line and '影响' not in line:
-                bs_start = i
-                break
+            if _is_table_header_line(line) and i + 30 < len(lines):
+                ahead = '\n'.join(lines[i:i+50])
+                if '货币资金' in ahead and '资产总计' in ahead and '短期借款' in ahead:
+                    # 确认是合并表（包含更多科目）还是母公司表
+                    is_consolidated = ('应收票据' in ahead or '存货' in ahead or '无形资产' in ahead)
+                    candidates.append((i, 0 if is_consolidated else 1))
+        if candidates:
+            candidates.sort(key=lambda x: x[1])  # 合并表优先
+            bs_start = candidates[0][0] - 5
 
     if bs_start is None:
         print('⚠️  PDF 中未找到合并资产负债表')
@@ -212,8 +319,8 @@ def extract_balance_sheet(pdf_path) -> dict[str, dict[str, str]]:
     search_start = bs_start
     search_end = bs_end or min(bs_start + 3000, len(lines))
 
-    # 步骤 2: 检测年份列头
-    col_names = _detect_year_columns(lines[search_start:search_end])
+    # 步骤 2: 检测年份列头（只搜 bs_start 之后 30 行——紧接标题后的表格）
+    col_names = _detect_year_columns(lines[bs_start:bs_start + 30])
     if not col_names:
         print('⚠️  未能识别年份列头')
         return {}
@@ -225,6 +332,15 @@ def extract_balance_sheet(pdf_path) -> dict[str, dict[str, str]]:
         full_year_idx = list(range(num_cols))  # fallback: 全部视为年末
 
     target_cols = [col_names[i] for i in full_year_idx]
+
+    # 检测是否双列模式（金额+占比），如：金额 占比 金额 占比 金额 占比
+    dual_col = False
+    for i in range(search_start + 1, min(search_start + 10, search_end)):
+        sub_parts = lines[i].split()
+        if len(sub_parts) >= 6 and all(p in ('金额', '占比') for p in sub_parts[:6]):
+            dual_col = True
+            break
+    effective_cols = num_cols * 2 if dual_col else num_cols
 
     # 步骤 3: 逐行解析
     result = OrderedDict()
@@ -241,16 +357,20 @@ def extract_balance_sheet(pdf_path) -> dict[str, dict[str, str]]:
         if len(parts) < 3:
             continue
 
-        # 最后 num_cols 个部分应该是数值
-        if len(parts) < num_cols + 1:
+        # 最后 effective_cols 个部分应该是数值
+        if len(parts) < effective_cols + 1:
             continue
 
-        vals_candidate = parts[-num_cols:]
-        name_candidate = ' '.join(parts[:-num_cols])
+        vals_candidate = parts[-effective_cols:]
+        name_candidate = ' '.join(parts[:-effective_cols])
 
-        # 验证：最后 num_cols 个是否都是数值
+        # 验证：最后 effective_cols 个是否都是数值
         if not all(_is_numeric_cell(v) for v in vals_candidate):
             continue
+
+        # 双列模式：只取 金额 列（每对第一个值），跳过 占比 列
+        if dual_col:
+            vals_candidate = vals_candidate[::2]  # 每两步取一步
 
         # 验证：科目名是否在目标列表中（或看起来像科目名）
         if not any(t in name_candidate for t in BS_TARGET_ITEMS):

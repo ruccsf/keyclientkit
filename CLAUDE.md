@@ -159,58 +159,98 @@ QCC 的 `get_financial_data` 对以下 6 个资产负债表科目返回不稳定
 
 **数据优先级：PDF（完整审计） > QCC（不稳定） > Web Search（兜底）**
 
-#### 1.5.1 搜索 PDF 链接
+#### 1.5.1 获取 PDF（三情况逐级 fallback）
 
-**从当年起逐年级联搜索**——先在全部四个数据源搜本年度，搜不到再退一年，直到找到为止：
+按以下优先级获取募集说明书 PDF：
 
-```
-搜索策略（从当前年份 YYYY 开始，最多回退3年）：
+**情况 1：用户拖入了 PDF 文件**
 
-第1轮 — 搜 YYYY 年（本年度）：
-  "{企业名称} YYYY年 募集说明书 site:sse.com.cn"
-  "{企业名称} YYYY年 募集说明书 site:money.finance.sina.com.cn"
-  "{企业名称} YYYY年 募集说明书 site:data.eastmoney.com"
-  "{企业名称} YYYY年 债券 募集说明书 chinamoney"
-
-第2轮 — 搜 YYYY-1 年（上一年）：
-  （同上，替换年份）
-
-第3轮 — 搜 YYYY-2 年：
-  （同上）
-
-第4轮 — 兜底（不限年份）：
-  "{企业名称} 募集说明书 site:sse.com.cn"
-  "{企业名称} 募集说明书 site:money.finance.sina.com.cn"
-```
-
-**关键规则：**
-- **每轮四个数据源都搜完**，确认都没有才进入下一轮
-- **找到募集书后立即停止**，不用继续搜更早年份
-- 当年度的募集书含最新审计数据（通常覆盖到前一年末）
-
-**四源对比：**
-
-| 数据源 | 优点 | 缺点 |
-|--------|------|------|
-| SSE 上交所 | 官方文件，PDF 直链可下载 | 搜索引擎收录慢 |
-| 新浪财经 | 债券公告聚合页，按日期排序 | 部分页面需二次跳转 |
-| 东方财富 | 公告列表完整，含 PDF 附件下载 | WebFetch 偶有反爬 |
-| chinamoney.com.cn | 银行间债券官方平台 | WebFetch 被安全策略阻止 |
-
-**优先选择：**
-1. SSE 上交所 PDF（`static.sse.com.cn`）——无反爬限制，直接下载
-2. 新浪财经债券公告页——如 `http://money.finance.sina.com.cn/bond/notice/sh{债券代码}.html` 聚合了该债券的全部公告
-3. 如果四源都找不到募集书，降级使用年度报告 PDF 或信用评级报告 PDF
-
-#### 1.5.2 下载并提取
+如果用户在聊天框中直接拖入了 PDF 文件，使用该文件并建立缓存：
 
 ```python
-from pdf_extractor import download_pdf, extract_balance_sheet, extract_subsidiaries
+from pdf_extractor import cache_pdf
 
-# 下载 PDF（优先完整版募集书，非"摘要"版）
-pdf_path = download_pdf('{PDF URL}', 'sessions/{企业名称}/pdf/')
+# 用户拖入的文件路径（从对话上下文中获取）
+pdf_path = cache_pdf('{用户提供的PDF路径}', '{企业名称}')
+print(f'📋 使用用户上传的 PDF 并已缓存')
+```
+
+→ 然后跳到 1.5.2 提取数据。
+
+**情况 2：检查本地缓存**
+
+检查 `sessions/{企业名称}/pdf/` 下是否有缓存的 PDF：
+
+```python
+from pdf_extractor import find_cached_pdf
+
+cached = find_cached_pdf('{企业名称}')
+```
+
+- **有缓存 → 询问用户**："发现本地有 {企业名称} 的募集书缓存（{文件名}），是否使用？"
+  - 用户选"是" → `pdf_path = cached` → 跳到 1.5.2
+  - 用户选"否" → 继续情况 3
+- **无缓存 →** 继续情况 3
+
+**情况 3：让用户选择上传或搜索**
+
+无缓存或用户拒绝缓存时，**询问用户**：
+
+> "请选择募集书来源："
+> 选项 A: "**我来上传** — 从本地选择一个 PDF 文件"
+> 选项 B: "**在线搜索** — AI 自动搜索并下载最新募集书"
+
+- **用户选 A（上传）** → 弹出系统文件对话框：
+  ```python
+  from pdf_extractor import ask_pdf_path, cache_pdf
+  
+  pdf_path = ask_pdf_path()
+  if pdf_path:
+      pdf_path = cache_pdf(pdf_path, '{企业名称}')
+  ```
+  → 跳到 1.5.2（如果用户取消对话框，回到情况 3 重新选择）
+
+- **用户选 B（搜索）** → 执行 WebSearch（保留原有四源逐年级联逻辑）：
+
+  **从当年起逐年级联搜索**——先在全部四个数据源搜本年度，搜不到再退一年：
+
+  ```
+  第1轮 — 搜 YYYY 年（本年度）：
+    "{企业名称} YYYY年 募集说明书 site:sse.com.cn"
+    "{企业名称} YYYY年 募集说明书 site:money.finance.sina.com.cn"
+    "{企业名称} YYYY年 募集说明书 site:data.eastmoney.com"
+    "{企业名称} YYYY年 债券 募集说明书 chinamoney"
+  第2轮 — 搜 YYYY-1 年（上一年）：（同上，替换年份）
+  第3轮 — 搜 YYYY-2 年：（同上）
+  第4轮 — 兜底（不限年份）
+  ```
+
+  **关键规则：** 每轮四个数据源都搜完，确认都没有才进入下一轮；找到后立即停止。
+
+  | 数据源 | 优点 | 缺点 |
+  |--------|------|------|
+  | SSE 上交所 | 官方文件，PDF 直链可下载 | 搜索引擎收录慢 |
+  | 新浪财经 | 债券公告聚合页，按日期排序 | 部分页面需二次跳转 |
+  | 东方财富 | 公告列表完整，含 PDF 附件下载 | WebFetch 偶有反爬 |
+  | chinamoney.com.cn | 银行间债券官方平台 | WebFetch 被安全策略阻止 |
+
+  下载后缓存：
+  ```python
+  from pdf_extractor import download_pdf, cache_pdf
+  pdf_path = download_pdf('{搜索到的PDF URL}', 'sessions/{企业名称}/pdf/')
+  if pdf_path:
+      cache_pdf(str(pdf_path), '{企业名称}')
+  ```
+
+#### 1.5.2 提取数据
+
+无论 PDF 来自哪种情况（用户拖入/缓存/上传/搜索下载），后续提取流程一致：
+
+```python
+from pdf_extractor import extract_balance_sheet, extract_subsidiaries
+
 if not pdf_path:
-    print('⚠️ PDF 下载失败，跳过 PDF 补充')
+    print('⚠️ 未获取到 PDF，跳过 PDF 补充')
 
 # 提取资产负债表
 bs_data = extract_balance_sheet(pdf_path)
