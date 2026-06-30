@@ -27,3 +27,4 @@ demo_pdf/*.pdf
 demo_pdf/extracted_*.txt
 demo_pdf/extracted_*.json
 demo_pdf/prospectus_*.txt
+competition-materials/
