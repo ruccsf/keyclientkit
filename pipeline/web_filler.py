@@ -31,8 +31,9 @@ from dataclasses import dataclass, field
 SKILL_DIR = Path(__file__).parent.parent
 SESSIONS_DIR = SKILL_DIR / 'sessions'
 
-sys.path.insert(0, str(Path(__file__).parent))
-from qcc_fetch import _s
+def _s(x) -> str:
+    """安全转字符串"""
+    return str(x) if x else ''
 
 
 # ================================================================

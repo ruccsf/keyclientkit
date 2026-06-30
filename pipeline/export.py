@@ -20,8 +20,6 @@ _dialog_shown = False  # 单次锁：防止重复弹窗
 def _pick_output_dir() -> Path:
     """弹出系统对话框让用户选择保存位置。仅交互式环境弹窗，否则回退默认 output/。"""
     global _dialog_shown
-    if not sys.stdin.isatty():
-        return OUTPUT_DIR
     if _dialog_shown:
         return OUTPUT_DIR  # 已弹过窗，不再弹
 
@@ -30,6 +28,11 @@ def _pick_output_dir() -> Path:
         from tkinter import filedialog
         root = tk.Tk()
         root.withdraw()
+        try:
+            root.tk.call('tk', 'windowingsystem')  # 探测 GUI 是否可用
+        except Exception:
+            root.destroy()
+            return OUTPUT_DIR
         chosen = filedialog.askdirectory(
             title='选择报告保存位置（Excel + HTML）',
             initialdir=str(OUTPUT_DIR),
@@ -48,6 +51,7 @@ SESSIONS_DIR = SKILL_DIR / 'sessions'
 OUTPUT_DIR = SKILL_DIR / 'output'
 
 sys.path.insert(0, str(PIPELINE_DIR))
+from web_filler import _find_content_column
 
 
 def print_stats(data: dict):
@@ -71,27 +75,6 @@ def print_stats(data: dict):
     print(f'  🟡 Web搜索: {yellows} ({yellows*100//total}%)')
     print(f'  🔴 待人工填: {reds} ({reds*100//total}%)')
     print(f'  自动填充率: {(greens+yellows)*100//total}%')
-
-
-def _find_content_column(row: dict) -> str:
-    """找到行的主内容列（排除键列、来源列、元数据列）"""
-    key_cols = {'信息项', '分析维度', '指标', '财务指标', '动向类别', '年份',
-                '债券类型', '需求类型', '维度', '产品类别', '风险类别', '准入方式',
-                '合作维度', '未覆盖业务领域', '短板类别', '目标维度', '拓展方向',
-                '序号', '接触类型', '角色', '银行', '职务', '子公司名称', '产品/服务',
-                '联动/创新类型', '对标维度', '准入方式', '年份', '准入方式'}
-    source_cols = {'备注/来源', '数据来源', '备注', '来源'}
-    candidates = ['内容', '核心内容', '具体内容', '付息负债总额(万元)',
-                  '发行金额(万元)', '余额(万元)', '方案描述', '风险点描述',
-                  '需求描述', '集团业务规模', '内容(含趋势对比)',
-                  '具体产品', '方案描述', '任务描述', '目标值']
-    for c in candidates:
-        if c in row:
-            return c
-    for c in row:
-        if not c.startswith('_') and c not in key_cols and c not in source_cols:
-            return c
-    return None
 
 
 def _check_yellow_fields(data: dict) -> int:
