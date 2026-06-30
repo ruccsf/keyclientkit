@@ -448,6 +448,10 @@ def fill_field(data: dict, field_key: str, content: str = '', source_url: str = 
                     if not matched:
                         continue
 
+                    # 🔴 红灯保护：行内数据不可被覆盖
+                    if row.get('_status') == 'red':
+                        continue
+
                     # 多列写入（优先，用于财务表等多列结构）
                     if column_values:
                         for col_name, col_val in column_values.items():
