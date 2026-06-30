@@ -75,11 +75,15 @@ def download_pdf(url: str, output_dir: str = 'sessions/_pdf_cache') -> Optional[
 # PDF 缓存管理
 # ================================================================
 
-# 全局缓存目录（项目根目录下）
-_CACHE_DIR = Path(__file__).parent.parent / 'sessions'
+# 缓存目录：智能体工作空间下（Path.cwd()），而非 skill 目录内
+def _get_workspace() -> Path:
+    """智能体工作空间 = 当前工作目录"""
+    return Path.cwd()
 
-# 技能工作空间下的共享缓存
-_WORKSPACE_CACHE = Path(__file__).parent.parent / '_pdf_cache'
+_CACHE_DIR = _get_workspace() / 'sessions'
+
+# 共享缓存（工作空间根目录下）
+_WORKSPACE_CACHE = _get_workspace() / '_pdf_cache'
 
 
 def find_cached_pdf(client_name: str) -> Optional[Path]:
