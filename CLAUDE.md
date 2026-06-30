@@ -244,62 +244,88 @@ cached = find_cached_pdf('{企业名称}')
 
 #### 1.5.2 提取数据
 
-无论 PDF 来自哪种情况（用户拖入/缓存/上传/搜索下载），后续提取流程一致：
+以下 4 个子任务必须**全部完成**（每个 ✅ 确认后再做下一个）。无论 PDF 来自哪种情况，提取流程一致。
+
+---
+
+**[ ] 任务 A：缓存 PDF + 定位章节**
 
 ```python
-from pdf_extractor import cache_pdf, find_section_pages, extract_pages_text
+from pdf_extractor import cache_pdf, find_section_pages
 
 if not pdf_path:
     print('⚠️ 未获取到 PDF，跳过 PDF 补充')
 
-# ⚠️ 必须先缓存！确保 source_url 使用缓存后的短路径
-pdf_path = cache_pdf(str(pdf_path), '{企业名称}')
-
-# 步骤 1: 定位章节页码
+pdf_path = cache_pdf(str(pdf_path), '{企业名称}')  # ⚠️ 必须缓存！
 sections = find_section_pages(pdf_path)
+print(f'📄 找到章节: {list(sections.keys())}')
 ```
 
-**步骤 2: AI 阅读文本并提取数据**
+---
 
-对每个需要的章节，提取页面文本后用你的阅读能力解析：
+**[ ] 任务 B：提取资产负债表**
 
 ```python
-# 资产负债表（含短期借款/长期借款/应付债券等全部科目）
+from pdf_extractor import extract_pages_text, map_to_skeleton_columns
+
 if 'balance_sheet' in sections:
     bs_text = extract_pages_text(pdf_path, sections['balance_sheet'])
-    # → 阅读 bs_text，从中提取每行"科目名 + 各年数值"
-    # → 输出格式: {"短期借款": {"2023年": "xxx", "2024年": "xxx", ...}, ...}
-
-# 二级子公司列表
-if 'subsidiaries' in sections:
-    sub_text = extract_pages_text(pdf_path, sections['subsidiaries'])
-    # → 阅读 sub_text，从中提取每行"企业名 + 经营地 + 业务性质 + 资本 + 持股比例"
-    # → 输出格式: [{"子公司名称": "...", "层级": "二级子公司", "注册地": "...", ...}, ...]
-
-# 债券明细
-if 'bonds' in sections:
-    bond_text = extract_pages_text(pdf_path, sections['bonds'])
-    # → 阅读 bond_text，从中提取每行"债券简称 + 发行规模 + 利率 + 到期日 ..."
-    # → 输出格式: [{"债券简称": "...", "发行规模(亿元)": "...", ...}, ...]
+    # → 你用阅读能力解析 bs_text
+    # → 输出 JSON: {"科目名": {"年份列": "数值"}, ...}
+    #   如: {"短期借款": {"2023年末": "2,943,294.21", ...}, "长期借款": {...}, ...}
+    # → 然后必须年份映射:
+    #   skeleton_cols = 从骨架财务表中读取的年份列名列表
+    #   bs_data = map_to_skeleton_columns(bs_output, skeleton_cols)
 ```
 
-**AI 解析原则：**
-- 阅读整个文本块，理解表格结构（不要用正则逐行拆）
-- 提取精确数值，跳过无关行（页眉/表头/小计/合计）
-- 如果表格跨多页，注意合并同名科目
-- 找不到某类数据就跳过，不强行填充
-- 提取结果存入变量：`bs_data`（资产负债表）、`subs`（子公司列表）、`bonds`（债券明细）
+**规则：**
+- ✅ 只提取骨架中已存在的科目名
+- ✅ 跳过页眉/表头/小计/合计行
+- ❌ 绝对不要填 `_status=='red'` 的行（一年内到期的应付债券/长期借款）
 
-**⚠️ 红灯保护：** `_status=='red'` 的行（如"一年内到期的应付债券""一年内到期的长期借款"）是行内需拆分数据，**禁止从 PDF 填充**。写入前检查骨架中该行的 `_status` 是否为 red，若是则跳过。
+---
 
-**⚠️ 年份映射：** PDF 的年份列（如 2024年末/2023年末）和骨架列（如 2025年/2024年/2023年）可能不一致。写入前必须调用 `map_to_skeleton_columns()` 对齐：
+**[ ] 任务 C：提取子公司列表（⚠️ 必须从 PDF，不能用 QCC！）**
 
 ```python
-from pdf_extractor import map_to_skeleton_columns
-# 从骨架中获取年份列名
-skeleton_cols = ['2023年', '2024年', '2025年']  # 实际从骨架读取
-bs_mapped = map_to_skeleton_columns(bs_data, skeleton_cols)
+if 'subsidiaries' in sections:
+    sub_text = extract_pages_text(pdf_path, sections['subsidiaries'])
+    # → 你用阅读能力解析 sub_text
+    # → 输出 JSON 数组:
+    #   [{"子公司名称": "北京首农股份有限公司",
+    #     "层级": "二级子公司",
+    #     "注册地": "北京",
+    #     "国标行业": "现代农牧业",
+    #     "业务板块": "现代农牧业",
+    #     "持股比例": "45.32",
+    #     "实收资本(万元)": "84,000.00",
+    #     "备注": "", "_status": "green"}, ...]
 ```
+
+**规则：**
+- ❌ 禁止使用 QCC 的对外投资数据——必须从 PDF 子公司的章节文本解析
+- ✅ 每行必须包含：子公司名称、注册地、国标行业、业务板块、持股比例、实收资本
+- ✅ 注册地 = PDF 中"主要经营地"列，国标行业 = "业务性质"列
+- ✅ 找不到的字段留空 ""
+
+---
+
+**[ ] 任务 D：提取债券明细（可选）**
+
+```python
+if 'bonds' in sections:
+    bond_text = extract_pages_text(pdf_path, sections['bonds'])
+    # → 你用阅读能力解析 bond_text
+    # → 输出 JSON 数组:
+    #   [{"债券简称": "22首农Y1", "发行主体": "", "发行日期": "2022/11/02",
+    #     "到期日期": "2025/11/04", "债券期限": "3+N",
+    #     "发行规模(亿元)": "20.00", "票面利率(%)": "2.87",
+    #     "余额(亿元)": "20.00", "_status": "green"}, ...]
+```
+
+**规则：**
+- ✅ 跳过小计/合计行
+- ✅ 找不到 → bonds = None（保留骨架占位）
 
 #### 1.5.3 写入骨架
 
