@@ -125,9 +125,8 @@ def _check_subsidiary_pdf_data(data: dict) -> int:
     return empty_count
 
 
-def _check_executive_resumes(data: dict) -> int:
-    """检查高管表中履历列是否已填充。返回履历为空的人数。"""
-    empty_count = 0
+def _check_executive_resumes(data: dict) -> tuple[int, int]:
+    """检查高管表中履历列是否已填充。返回 (为空人数, 总人数)。表未找到返回 (-1, 0)。"""
     for ch_val in data.get('chapters', {}).values():
         if not isinstance(ch_val, dict):
             continue
@@ -135,13 +134,15 @@ def _check_executive_resumes(data: dict) -> int:
             if not isinstance(sec_val, dict):
                 continue
             for tbl in sec_val.get('tables', []):
-                if '高管' not in tbl.get('title', ''):
-                    continue
-                for row in tbl.get('data', []):
-                    履历 = str(row.get('履历', '')).strip()
-                    if not 履历:
-                        empty_count += 1
-    return empty_count
+                if '高管' in tbl.get('title', ''):
+                    total = 0
+                    empty = 0
+                    for row in tbl.get('data', []):
+                        total += 1
+                        if not str(row.get('履历', '')).strip():
+                            empty += 1
+                    return empty, total
+    return -1, 0  # 表未找到
 
 
 def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
@@ -183,17 +184,19 @@ def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
         print(f'✅ 子公司 PDF 数据已填充')
 
     # 高管履历检查：🟡 履历列必须已搜索
-    empty_resumes = _check_executive_resumes(data)
-    if empty_resumes > 0 and not force:
+    empty_resumes, total_resumes = _check_executive_resumes(data)
+    if empty_resumes < 0:
+        print('⚠️  未找到高管信息表，跳过履历检查')
+    elif empty_resumes > 0 and not force:
         print()
-        print(f'❌ 高管表缺少履历：{empty_resumes} 位高管的履历列为空')
+        print(f'❌ 高管表缺少履历：{empty_resumes}/{total_resumes} 位高管的履历列为空')
         print(f'   请先完成 Step 2 高管履历搜索')
         print(f'   强制导出: python pipeline/export.py --client {client_name} --force')
         sys.exit(1)
     elif empty_resumes > 0 and force:
-        print(f'⚠️  --force: 跳过履历检查（{empty_resumes} 位高管履历为空）')
+        print(f'⚠️  --force: 跳过履历检查（{empty_resumes}/{total_resumes} 位高管履历为空）')
     else:
-        print(f'✅ 高管履历已填充')
+        print(f'✅ 高管履历已填充（{total_resumes} 人）')
 
     if output_dir is None:
         output_dir = OUTPUT_DIR

@@ -68,17 +68,17 @@ def get_search_plans(data: dict = None) -> list[SearchPlan]:
     # === Ch1(1) 经营情况表 ===
     plans.extend([
         SearchPlan('主营业务板块营收占比', '主营业务板块营收占比',
-            queries=[f'{company} 主营业务 营收构成 业务板块 占比'],
+            queries=[f'{company} 主营业务 营收构成 业务板块 占比 -股吧 -论坛'],
             priority_domains=[], extract_hint='摘取各业务板块名称及营收占比百分比',
             target_table='经营情况《★》', target_row_key='主营业务板块营收占比'),
 
         SearchPlan('行业排名', '行业排名',
-            queries=[f'{industry} 企业排名 TOP10 2025', f'{company} 行业排名 市场份额'],
+            queries=[f'{industry} 企业排名 TOP10 2025 -股吧', f'{company} 行业排名 市场份额 site:finance.sina.com.cn'],
             priority_domains=[], extract_hint='摘取行业排名、榜单名称、发布机构',
             target_table='经营情况《★》', target_row_key='行业排名'),
 
         SearchPlan('市场份额', '市场份额(%)及测算依据',
-            queries=[f'{company} 市场份额 {industry}', f'{industry} 市场占有率 头部企业'],
+            queries=[f'{company} 市场份额 {industry} site:finance.sina.com.cn', f'{industry} 市场占有率 头部企业 -股吧'],
             priority_domains=[], extract_hint='摘取市场份额百分比及测算依据',
             target_table='经营情况《★》', target_row_key='市场份额'),
     ])
@@ -263,19 +263,19 @@ def get_search_plans(data: dict = None) -> list[SearchPlan]:
     # === Ch2(2) 债券及其他融资情况 ===
     plans.extend([
         SearchPlan('上一年', '总体融资规模变动',
-            queries=[f'{company} 债券 融资规模 债务 2024 2025'],
+            queries=[f'{company} 债券 融资规模 债务 site:chinamoney.com.cn', f'{company} 付息负债 融资 2024 2025 -股吧'],
             priority_domains=['chinamoney.com.cn', 'shclearing.com.cn'],
             extract_hint='摘取近年付息负债总额、同比变动、主要融资方式',
             target_table='总体融资规模变动《★》', target_row_key='上一年'),
 
         SearchPlan('信用债', '近五年发债情况',
-            queries=[f'{company} 债券发行 中期票据 公司债 2024 2025'],
+            queries=[f'{company} 债券发行 中期票据 公司债 site:chinamoney.com.cn', f'{company} 债券 发行 site:sse.com.cn'],
             priority_domains=['chinamoney.com.cn'],
             extract_hint='摘取债券类型、发行金额、利率、发行时间',
             target_table='本级近五年发债情况', target_row_key='信用债'),
 
         SearchPlan('待检索存续债券', '存续期债券明细',
-            queries=[f'{company} 存续债券 余额 到期 2025'],
+            queries=[f'{company} 存续债券 余额 site:chinamoney.com.cn', f'{company} 存续期债券 2025 -股吧'],
             priority_domains=['chinamoney.com.cn', 'shclearing.com.cn'],
             extract_hint='摘取存续债券名称、余额、利率、到期日、资金用途',
             target_table='存续期债券明细', target_row_key=''),
@@ -391,7 +391,8 @@ def batch_fill(client_name: str, results: list[dict]) -> int:
         print(f'已填充 {filled} 个字段')
     """
     data = load_client_data(client_name)
-    count = 0
+    success = 0
+    failed = []
     for r in results:
         field = r.get('field', '')
         content = r.get('content', '')
@@ -404,9 +405,20 @@ def batch_fill(client_name: str, results: list[dict]) -> int:
             continue
         if fill_field(data, field, content=content, source_url=source_url,
                       source_note=source_note, column_values=column_values):
-            count += 1
+            success += 1
+        else:
+            failed.append(field)
     save_client_data(client_name, data)
-    return count
+    if failed:
+        print(f'⚠️  batch_fill: {len(failed)} 个字段未匹配 → {failed}')
+    return success
+
+
+def _normalize_name(name: str) -> str:
+    """去掉虚词后用于模糊匹配。如「一年内到期的非流动负债」→「一年内到期非流动负债」"""
+    for word in ['的', '其', '之', '及', '与', '和']:
+        name = name.replace(word, '')
+    return name
 
 
 def fill_field(data: dict, field_key: str, content: str = '', source_url: str = '',
@@ -434,7 +446,7 @@ def fill_field(data: dict, field_key: str, content: str = '', source_url: str = 
                 continue
             for tbl in sec_val.get('tables', []):
                 for row in tbl.get('data', []):
-                    # 查找匹配的行
+                    # 查找匹配的行（精确匹配 → 模糊匹配）
                     matched = False
                     for col in ['信息项', '分析维度', '指标', '财务指标', '动向类别',
                                 '年份', '债券类型', '需求类型', '维度', '产品类别',
@@ -442,7 +454,12 @@ def fill_field(data: dict, field_key: str, content: str = '', source_url: str = 
                                 '短板类别', '目标维度', '拓展方向', '联动/创新类型',
                                 '接触类型', '对标维度', '债券名称', '公司名称',
                                 '子公司名称', '银行']:
-                        if field_key in str(row.get(col, '')):
+                        row_val = str(row.get(col, ''))
+                        if field_key in row_val:
+                            matched = True
+                            break
+                        # 模糊匹配：去掉虚词「的」「其」「之」后比对
+                        if _normalize_name(field_key) in _normalize_name(row_val):
                             matched = True
                             break
 
@@ -476,6 +493,9 @@ def fill_field(data: dict, field_key: str, content: str = '', source_url: str = 
 
                     row['_status'] = status
                     found = True
+
+    if not found and (content or column_values):
+        print(f'⚠️  fill_field: 未找到匹配行 → "{field_key}"（数据未写入！）')
 
     return found
 
