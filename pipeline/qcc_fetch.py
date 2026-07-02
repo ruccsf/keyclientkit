@@ -1618,6 +1618,30 @@ def fetch_qcc_data(client_name: str, tools_filter: list = None) -> dict:
             raw_data.append({'tool': key, 'label': label, 'response': extended[key]})
     data['_qcc_raw'] = raw_data
 
+    # 采集日志
+    try:
+        from workflow_log import log_event
+        qcc_stats = {}
+        for entry in raw_data:
+            resp = entry.get('response', {})
+            if isinstance(resp, dict) and '_qcc_error' in resp:
+                qcc_stats[entry['tool']] = f'error: {resp["_qcc_error"]}'
+            elif resp is None:
+                qcc_stats[entry['tool']] = 'null'
+            else:
+                qcc_stats[entry['tool']] = 'ok'
+        greens = sum(1 for ch in data['chapters'].values() if isinstance(ch, dict)
+                     for sec in ch.values() if isinstance(sec, dict)
+                     for tbl in sec.get('tables', [])
+                     for r in tbl.get('data', []) if r.get('_status') == 'green')
+        yellows = sum(1 for ch in data['chapters'].values() if isinstance(ch, dict)
+                      for sec in ch.values() if isinstance(sec, dict)
+                      for tbl in sec.get('tables', [])
+                      for r in tbl.get('data', []) if r.get('_status') == 'yellow')
+        log_event(client_name, 'qcc_fetch', 'done', greens=greens, yellows=yellows, apis=qcc_stats)
+    except Exception:
+        pass
+
     return data
 
 

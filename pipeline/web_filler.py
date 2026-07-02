@@ -389,6 +389,26 @@ def save_client_data(client_name: str, data: dict):
     with open(session_path / 'data.json', 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+    # 统计并记录日志
+    try:
+        from workflow_log import log_event
+        greens = yellows = reds = 0
+        for ch in data.get('chapters', {}).values():
+            if not isinstance(ch, dict): continue
+            for sec in ch.values():
+                if not isinstance(sec, dict): continue
+                for tbl in sec.get('tables', []):
+                    for row in tbl.get('data', []):
+                        s = row.get('_status', 'red')
+                        if s == 'green': greens += 1
+                        elif s == 'yellow': yellows += 1
+                        else: reds += 1
+        log_event(client_name, 'save', 'stats',
+                  green=greens, yellow=yellows, red=reds,
+                  total=greens+yellows+reds)
+    except Exception:
+        pass
+
 
 def batch_fill(client_name: str, results: list[dict]) -> int:
     """
@@ -438,6 +458,13 @@ def batch_fill(client_name: str, results: list[dict]) -> int:
     save_client_data(client_name, data)
     if failed:
         print(f'⚠️  batch_fill: {len(failed)} 个字段未匹配 → {failed}')
+    try:
+        from workflow_log import log_event
+        log_event(client_name, 'web_fill', 'batch_done',
+                  submitted=len(results), success=success,
+                  failed=len(failed), failed_fields=failed[:15])
+    except Exception:
+        pass
     return success
 
 
