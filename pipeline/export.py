@@ -281,15 +281,17 @@ def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
     else:
         print(f'✅ 高管履历已填充（{total_resumes} 人）')
 
+    # 守卫全部通过后，才弹对话框（只弹一次）
     if output_dir is None:
-        output_dir = OUTPUT_DIR
-    out_dir = Path(output_dir)
+        print('📁 正在打开保存位置选择对话框...')
+        output_dir = _pick_output_dir()
+    out_dir = Path(output_dir) if output_dir else OUTPUT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
+    print(f'📁 输出目录: {out_dir.absolute()}')
 
     safe_name = data['meta'].get('client_name', client_name).replace('/', '_')[:30]
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-    print(f'📁 输出目录: {out_dir.absolute()}')
     print(f'⏳ 正在生成报告...')
 
     if not html_only:
@@ -413,10 +415,5 @@ if __name__ == '__main__':
             print(f'📁 已选择: {output_dir.absolute()}')
         cmd_readback(client, output_dir=output_dir)
     else:
-        if output_dir is None:
-            print('📁 报告即将生成（Excel 核对表 + HTML 报告），请选择保存位置...')
-            print('   （直接点确定使用默认 output/ 目录）')
-            output_dir = _pick_output_dir()
-        if output_dir is not None:
-            print(f'📁 已选择: {output_dir.absolute()}')
+        # 对话框移到 cmd_export 内部（守卫通过后才弹）
         cmd_export(client, excel_only=excel_only, html_only=html_only, force=force, output_dir=output_dir)
