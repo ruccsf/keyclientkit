@@ -1620,7 +1620,6 @@ def fetch_qcc_data(client_name: str, tools_filter: list = None) -> dict:
 
     # 采集日志
     try:
-        from workflow_log import log_event
         qcc_stats = {}
         for entry in raw_data:
             resp = entry.get('response', {})
@@ -1638,7 +1637,11 @@ def fetch_qcc_data(client_name: str, tools_filter: list = None) -> dict:
                       for sec in ch.values() if isinstance(sec, dict)
                       for tbl in sec.get('tables', [])
                       for r in tbl.get('data', []) if r.get('_status') == 'yellow')
-        log_event(client_name, 'qcc_fetch', 'done', greens=greens, yellows=yellows, apis=qcc_stats)
+        try:
+            from workflow_log import log_event as _qcc_log
+            _qcc_log(client_name, 'qcc_fetch', 'done', greens=greens, yellows=yellows, apis=qcc_stats)
+        except Exception as _e:
+            pass  # 日志不可用不阻塞
     except Exception:
         pass
 

@@ -36,6 +36,24 @@ def _s(x) -> str:
     return str(x) if x else ''
 
 
+# 日志模块导入
+_workflow_log = None
+try:
+    from workflow_log import log_event as _log_event
+    _workflow_log = True
+except Exception:
+    pass  # 日志模块不可用时不阻塞
+
+
+def _wf_log(client_name, step, event, **details):
+    """记录工作流事件（日志不可用时静默跳过）。"""
+    if _workflow_log:
+        try:
+            _log_event(client_name, step, event, **details)
+        except Exception:
+            pass
+
+
 # ================================================================
 # 搜索计划定义
 # ================================================================
@@ -391,7 +409,6 @@ def save_client_data(client_name: str, data: dict):
 
     # 统计并记录日志
     try:
-        from workflow_log import log_event
         greens = yellows = reds = 0
         for ch in data.get('chapters', {}).values():
             if not isinstance(ch, dict): continue
@@ -403,9 +420,9 @@ def save_client_data(client_name: str, data: dict):
                         if s == 'green': greens += 1
                         elif s == 'yellow': yellows += 1
                         else: reds += 1
-        log_event(client_name, 'save', 'stats',
-                  green=greens, yellow=yellows, red=reds,
-                  total=greens+yellows+reds)
+        _wf_log(client_name, 'save', 'stats',
+                green=greens, yellow=yellows, red=reds,
+                total=greens+yellows+reds)
     except Exception:
         pass
 
@@ -458,13 +475,9 @@ def batch_fill(client_name: str, results: list[dict]) -> int:
     save_client_data(client_name, data)
     if failed:
         print(f'⚠️  batch_fill: {len(failed)} 个字段未匹配 → {failed}')
-    try:
-        from workflow_log import log_event
-        log_event(client_name, 'web_fill', 'batch_done',
-                  submitted=len(results), success=success,
-                  failed=len(failed), failed_fields=failed[:15])
-    except Exception:
-        pass
+    _wf_log(client_name, 'web_fill', 'batch_done',
+            submitted=len(results), success=success,
+            failed_count=len(failed), failed_fields=failed[:15])
     return success
 
 
