@@ -294,19 +294,35 @@ def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
 
     print(f'⏳ 正在生成报告...')
 
+    generated = []
     if not html_only:
-        from excel_renderer import generate_excel
-        excel_path = out_dir / f'{safe_name}_核对表_{ts}.xlsx'
-        generate_excel(data, str(excel_path))
-        size_kb = excel_path.stat().st_size // 1024
-        print(f'✅ Excel: {excel_path.name} ({size_kb}KB)')
+        try:
+            from excel_renderer import generate_excel
+            excel_path = out_dir / f'{safe_name}_核对表_{ts}.xlsx'
+            generate_excel(data, str(excel_path))
+            size_kb = excel_path.stat().st_size // 1024
+            print(f'✅ Excel: {excel_path.name} ({size_kb}KB)')
+            generated.append('Excel')
+        except Exception as e:
+            print(f'❌ Excel 生成失败: {e}')
 
     if not excel_only:
-        from html_renderer import generate_html
-        html_path = out_dir / f'{safe_name}合作策略_报告_{ts}.html'
-        generate_html(data, str(html_path))
-        size_kb = html_path.stat().st_size // 1024
-        print(f'✅ HTML:  {html_path.name} ({size_kb}KB)')
+        try:
+            from html_renderer import generate_html
+            html_path = out_dir / f'{safe_name}合作策略_报告_{ts}.html'
+            generate_html(data, str(html_path))
+            size_kb = html_path.stat().st_size // 1024
+            print(f'✅ HTML:  {html_path.name} ({size_kb}KB)')
+            generated.append('HTML')
+        except Exception as e:
+            print(f'❌ HTML 生成失败: {e}')
+            import traceback
+            traceback.print_exc()
+
+    # 验证产物
+    if len(generated) < 2 and not excel_only and not html_only:
+        print(f'⚠️  只生成了 {generated}，另一个产物可能失败。输出目录: {out_dir.absolute()}')
+        print(f'   请检查上方错误信息。')
 
     print_stats(data)
     _write_audit(audit, 'passed' if not (empty_yellows or empty_subs or empty_resumes > 0) else 'forced')
