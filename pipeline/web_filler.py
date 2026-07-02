@@ -83,6 +83,15 @@ def get_search_plans(data: dict = None) -> list[SearchPlan]:
             target_table='经营情况《★》', target_row_key='市场份额'),
     ])
 
+    # === Ch1(1) 经营情况：专利/核心技术/知名品牌（QCC IPR 仅覆盖 APP+特许经营，需补充搜索） ===
+    plans.append(
+        SearchPlan('专利/核心技术/知名品牌', '专利/核心技术/知名品牌',
+            queries=[f'{company} 专利 商标 核心技术 知名品牌 知识产权'],
+            priority_domains=[],
+            extract_hint='搜索企业拥有的专利数量、核心技术领域、知名品牌/商标（如中华老字号、驰名商标等），摘取关键信息1-3条',
+            target_table='经营情况《★》', target_row_key='专利'),
+    )
+
     # === Ch1(1) 基础信息表 ===
     plans.append(
         SearchPlan('外部评级', '外部评级(主体/债项)',
@@ -234,10 +243,28 @@ def get_search_plans(data: dict = None) -> list[SearchPlan]:
 
     # === Ch1(2) 近期发展动向 ===
     plans.extend([
+        SearchPlan('政策类', '政策类',
+            queries=[f'{industry} 最新政策 2025 2026 监管 规范'],
+            priority_domains=['gov.cn', 'ndrc.gov.cn'],
+            extract_hint='摘取1-2条对行业有重大影响的政策/法规变动',
+            target_table='近期发展动向', target_row_key='政策类'),
+
         SearchPlan('业务经营动向', '业务经营动向',
             queries=[f'{company} 经营 业绩 最新 2025 2026'],
             priority_domains=[], extract_hint='摘取近期重要经营事件、业绩亮点（1-2条）',
             target_table='近期发展动向', target_row_key='业务经营动向'),
+
+        SearchPlan('资本运作与股权变动', '资本运作与股权变动',
+            queries=[f'{company} 资本运作 股权变动 并购 重组 2025 2026'],
+            priority_domains=['sse.com.cn'],
+            extract_hint='搜索企业资本运作事件：增资、减资、股权转让、并购重组、引入战投等，摘取1-2条',
+            target_table='近期发展动向', target_row_key='资本运作与股权变动'),
+
+        SearchPlan('风险/负面新闻', '风险/负面新闻',
+            queries=[f'{company} 风险 负面 诉讼 处罚 舆情 2025 2026'],
+            priority_domains=[],
+            extract_hint='搜索企业公开负面新闻：诉讼纠纷、安全事故、产品召回、环保处罚、劳资纠纷等，摘取1-2条（如无则标注"经检索未发现公开负面信息"）',
+            target_table='近期发展动向', target_row_key='风险/负面新闻'),
 
         SearchPlan('人事与治理调整', '人事与治理调整',
             queries=[f'{company} 人事变动 高管 任免 2025 2026'],

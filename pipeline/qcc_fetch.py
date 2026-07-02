@@ -33,12 +33,12 @@ def _s(val, default=''):
 
 
 def _yuan_to_wan(val):
-    """元转万元"""
+    """元转万元（非数字返回空字符串，避免文字污染数值列）"""
     try:
         n = float(str(val).replace(',', '').replace('，', ''))
         return f'{n/10000:,.0f}'
     except (ValueError, TypeError):
-        return _s(val)
+        return ''
 
 
 def map_registration_to_basic_info(reg: dict, company_name: str) -> list[dict]:
@@ -1303,21 +1303,21 @@ def fill_extended_qcc_data(data: dict, extended: dict, personnel: list = None):
         if '风险' in cat:
             if penalty_desc:
                 r['具体内容'] = f'[行政处罚] {penalty_desc}'[:500]
-                r['备注/来源'] = '企查查 API: qcc-risk (get_administrative_penalty)'
+                r['备注/来源'] = '企查查 API: qcc-risk'
                 r['_status'] = 'green'
             else:
-                r['具体内容'] = '经企查查风险数据库检索，近三年无行政处罚记录'
-                r['备注/来源'] = '企查查 API: qcc-risk (get_administrative_penalty) — 检索无记录'
-                r['_status'] = 'green'  # 有权威数据源确认"无记录"=绿色
+                r['具体内容'] = '经企查查风险数据库检索，近三年无行政处罚记录（还需搜索公开负面新闻）'
+                r['备注/来源'] = '企查查 API: qcc-risk — 检索无记录'
+                r['_status'] = 'yellow'  # QCC 只查行政处罚，负面新闻需 WebSearch
         elif '资本' in cat:
             if bankruptcy_desc:
                 r['具体内容'] = f'[破产重整] {bankruptcy_desc}'[:500]
-                r['备注/来源'] = '企查查 API: qcc-risk (get_bankruptcy_reorganization)'
+                r['备注/来源'] = '企查查 API: qcc-risk'
                 r['_status'] = 'green'
             else:
-                r['具体内容'] = '经企查查破产重整数据库检索，无破产重整记录'
-                r['备注/来源'] = '企查查 API: qcc-risk (get_bankruptcy_reorganization) — 检索无记录'
-                r['_status'] = 'green'
+                r['具体内容'] = '经企查查破产重整数据库检索，无破产重整记录（还需搜索资本运作、股权变动等公开信息）'
+                r['备注/来源'] = '企查查 API: qcc-risk — 检索无记录'
+                r['_status'] = 'yellow'  # QCC 只查破产重整，资本运作/股权变动需 WebSearch
 
     # --- Ch1(2) 近期发展动向：行政许可 (qcc-operation) ---
     operation = extended.get('operation', {})
