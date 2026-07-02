@@ -18,13 +18,8 @@ from pathlib import Path
 from datetime import datetime
 
 
-# 日志目录：智能体工作空间下（与 PDF 缓存相同位置）
-def _get_workspace():
-    """获取智能体工作空间。在 WorkBuddy 环境中为项目根目录，否则为 cwd。"""
-    # 与 pdf_extractor._get_workspace 保持一致
-    return Path.cwd()
-
-_LOG_DIR = _get_workspace() / 'sessions'
+# 日志目录：与 data.json 同目录（sessions/{client}/workflow.jsonl）
+_LOG_DIR = Path(__file__).parent.parent / 'sessions'
 
 
 def _get_workflow_env():
