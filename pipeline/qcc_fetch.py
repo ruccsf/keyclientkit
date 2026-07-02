@@ -575,7 +575,7 @@ def map_investments_to_subsidiaries_v2(investments: dict) -> list[dict]:
                 '持股比例': ratio,
                 '实收资本(万元)': '',
                 '备注': f'经营状态: {status}' if status else '',
-                '_status': 'green',
+                '_status': 'yellow',  # 注册地/国标行业/实收资本需 PDF 补充
                 '_column_status': {'子公司名称': 'green', '层级': 'green', '注册地': 'yellow', '国标行业': 'yellow', '业务板块': 'yellow', '持股比例': 'green', '实收资本(万元)': 'yellow', '备注': 'yellow'},
             })
 
