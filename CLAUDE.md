@@ -474,14 +474,19 @@ fill_field(data, 高管姓名, content=履历摘要, source_url=...)
 - **Never fabricate.** If nothing is found, write "经检索未发现公开数据" and leave empty source_url
 - Cross-verify critical fields with 2-3 different search queries
 
-**⚠️ 导出前自检（必须执行！）：**
+**⚠️ 导出前自检（必须执行！不得跳过！）：**
 
 ```bash
 cd keyclientkit
 PYTHONIOENCODING=utf-8 python pipeline/export.py --client {企业名称} --stats
 ```
 
-如果输出显示 `🟡 Web搜索: X` 且 `⚠️ 以下 🟡 字段为空`，**必须回到 Step 2 补搜**，不得使用 `--force` 强制导出。只有当所有 🟡 字段都已搜索（搜不到已标注"经检索未发现"）才能进入 Step 3。
+输出会显示每个 🟡 字段的填充状态。**只要看到 `⚠️ 以下 X/Y 个 🟡 字段为空`，你必须回到 Step 2 逐条补搜，直到空黄灯数量降为 0**。搜不到的标注"经检索未发现公开数据"也算已处理。
+
+**这是硬性规定：**
+- 黄灯为空 → 不准进入 Step 3
+- 不准用 `--force`（被环境变量锁了也绕不过）
+- 如果执行中卡住或 token 用完，明确告知用户哪些字段还没搜，让用户决定是否强制导出
 
 ### Step 3: Export Reports (must execute, do not skip)
 
