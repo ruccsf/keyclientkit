@@ -490,7 +490,7 @@ cd keyclientkit
 PYTHONIOENCODING=utf-8 python pipeline/export.py --client {企业名称}
 ```
 
-**禁止使用 `--force`** 除非用户明确要求。如果被守卫拦截，回到 Step 2 补搜被列出的空字段。
+**禁止使用 `--force`**——`--force` 现在需要同时设置环境变量 `WORKBUDDY_FORCE_EXPORT=1` 才能生效。普通 `--force` 会被拦截并提示缺少的字段。如果被守卫拦截，回到 Step 2 补搜被列出的空字段。
 
 Generates: `output/{企业名称}_核对表.xlsx` and `output/{企业名称}合作策略_报告.html`.
 
