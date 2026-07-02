@@ -562,13 +562,15 @@ def extract_subsidiaries(pdf_path) -> list[dict]:
     # 定位"主要子公司情况"
     sec_start = None
     for i, line in enumerate(lines):
-        if '主要子公司情况' in line or ('纳入合并报表范围' in line and '二级子公司' in line):
+        if ('主要子公司情况' in line or ('纳入合并报表范围' in line and '二级子公司' in line)
+                or ('发行人' in line and '子公司情况' in line)
+                or ('主要子公司' in line and '情况' in line)):
             sec_start = i
             break
     if sec_start is None:
         return []
 
-    search_end = min(sec_start + 200, len(lines))
+    search_end = min(sec_start + 300, len(lines))
     subsidiaries = []
     pending = None  # 跨行缓存: (name, location, biz, capital, ratio)
 
@@ -588,11 +590,11 @@ def extract_subsidiaries(pdf_path) -> list[dict]:
             parts = rest.split()
 
             # 从后往前解析数值列
-            # 持股比例：≤100 的纯数字（可能带 % 或小数点），不带逗号
-            # 实收资本：大额数字，通常带逗号
+            # 持股比例：≤100 无逗号；实收资本：>100 或带逗号
+            # 部分表有"享有的表决权比例"作为第三列，跳过
             ratio = ''
             capital = ''
-            for _ in range(2):  # 最多尝试提取 2 个尾部数值
+            for _ in range(3):  # 最多 3 个尾部数值（比例 + 资本 + 表决权比例）
                 if not parts:
                     break
                 val = parts[-1]
@@ -600,14 +602,14 @@ def extract_subsidiaries(pdf_path) -> list[dict]:
                 if not re.match(r'^[\d.]+$', val_clean):
                     break
                 num = float(val_clean)
-                # 持股比例：≤100 且不带逗号（排除大额实收资本）
-                if num <= 100 and ',' not in val and not capital and not ratio:
-                    ratio = parts.pop()
-                # 实收资本：带逗号的大额数字 或 >100
+                if num <= 100 and ',' not in val and not ratio:
+                    ratio = parts.pop()  # 第一个 ≤100 = 持股比例
                 elif (',' in val or num > 100) and not capital:
-                    capital = parts.pop()
+                    capital = parts.pop()  # >100 或带逗号 = 实收资本
+                elif num <= 100 and not ratio:
+                    ratio = parts.pop()
                 else:
-                    break
+                    parts.pop()  # 额外的 ≤100 列（表决权比例），跳过
 
             # 剩余: 企业名 + 经营地 + 业务性质
             locations = {'北京','上海','天津','香港','深圳','广州','河北','浙江','江苏','西藏'}
@@ -693,6 +695,13 @@ def extract_subsidiaries(pdf_path) -> list[dict]:
         and '序号' not in s.get('业务板块', '')  # 排除表头混入
         and '联营企业' not in s.get('业务板块', '')  # 排除章节标题混入
     ]
+
+    # 表格式失败（<3条 OR 实收资本全空）→ 尝试段落式
+    has_capital = any(s.get('实收资本(万元)', '').strip() for s in subsidiaries)
+    if len(subsidiaries) < 3 or not has_capital:
+        para_subs = _extract_subs_paragraph_format(pdf_path)
+        if para_subs:
+            return para_subs
 
     return subsidiaries
 
@@ -845,6 +854,111 @@ def extract_bonds(pdf_path) -> Optional[list[dict]]:
     bonds = [b for b in bonds if b['发行日期'] and b['发行规模(亿元)'] and re.search(r'[A-Za-z0-9]', b['债券简称'])]
 
     return bonds if bonds else None
+
+
+# ================================================================
+# 段落式子公司提取（fallback）
+# ================================================================
+
+def _extract_subs_paragraph_format(pdf_path) -> list[dict]:
+    """段落式：'N、企业名' + 段落中含'持股比例为X%''注册资本为Y万元'"""
+    lines = _extract_text_lines(pdf_path)
+
+    # 定位段落式子公司章节（要求包含"子公司"+"情况"或"如下"）
+    sec_start = None
+    for i, line in enumerate(lines):
+        if ('子公司' in line and ('基本情况' in line or '情况如下' in line or '明细如下' in line)):
+            sec_start = i
+            break
+    # fallback: 任何包含"主要子公司"的行
+    if sec_start is None:
+        for i, line in enumerate(lines):
+            if '主要子公司' in line:
+                sec_start = i
+                break
+    if sec_start is None:
+        return []
+
+    # 找编号条目: "N、企业名（可选备注）"
+    subsidiaries = []
+    for i in range(sec_start, min(sec_start + 500, len(lines))):
+        line = lines[i].strip()
+        # 匹配: 数字 + 、/.) + 公司名
+        m = re.match(r'^(\d{1,2})\s*[、．.)）]\s*(.+)$', line)
+        if not m:
+            continue
+
+        seq = int(m.group(1))
+        if seq > 80:  # 序号太大可能是其他内容
+            continue
+
+        name = m.group(2).strip()
+        # 必须是法人实体，排除部门/个人
+        if not any(kw in name for kw in ['有限公司', '股份公司', '有限责任公司',
+                                           '集团', '工厂', '学校', '医院']):
+            continue
+        # 清理括号内的股票代码等
+        name = re.sub(r'[（(][^）)]*股票代码[：:\s]*\d+[^）)]*[）)]', '', name)
+        name = re.sub(r'[（(]\s*\d{6}\s*[）)]', '', name)
+        name = name.strip().rstrip('，。,；;')
+        if len(name) < 6:
+            continue
+
+        # 取后续文本直到下一条目或 section 边界
+        tail_lines = []
+        for j in range(i + 1, min(len(lines), i + 25)):
+            l = lines[j].strip()
+            # 下一条目（任何编号的公司条目）
+            if re.match(r'^\d{1,2}\s*[、．.)）]\s*.{2,}', l) and '公司' in l:
+                break
+            # 章节边界
+            if any(kw in l for kw in ['（四）', '（五）', '（六）', '四、', '五、', '六、']):
+                break
+            # 跳过页眉/页码
+            if re.match(r'^\d{1,3}$', l) or '募集说明书' in l:
+                continue
+            tail_lines.append(l)
+        tail = '\n'.join(tail_lines)
+
+        # 提取持股比例
+        ratio = ''
+        ratio_m = re.search(r'持股比例[为约]?\s*(\d+\.?\d*)\s*%', tail)
+        if ratio_m:
+            ratio = ratio_m.group(1)
+        else:
+            ratio_m2 = re.search(r'[占持]股[份比].*?(\d+\.?\d*)\s*%', tail)
+            if ratio_m2:
+                ratio = ratio_m2.group(1)
+
+        # 提取注册资本/实收资本
+        capital = ''
+        cap_m = re.search(r'(?:注册资本|实收资本)[为约]?\s*([\d,]+\.?\d*)\s*万元', tail)
+        if cap_m:
+            capital = cap_m.group(1)
+
+        # 提取注册地
+        location = ''
+        loc_m = re.search(r'注册[地址地][：:]?\s*([^\s，。,\.；;]{2,10})', tail)
+        if loc_m:
+            location = loc_m.group(1).strip()
+
+        # 业务描述：取第一个"经营范围/主要从事/主要业务为"后的内容
+        biz = ''
+        biz_m = re.search(r'(?:主要从事|主要业务[为是]|经营范围\s*[为包括：:]?)(.{8,60})', tail)
+        if biz_m:
+            biz = biz_m.group(1).strip()[:50]
+
+        subsidiaries.append({
+            '子公司名称': name,
+            '层级': '二级子公司',
+            '业务板块': biz,
+            '持股比例': ratio,
+            '实收资本(万元)': capital,
+            '备注': f'注册地: {location}' if location else '',
+            '_status': 'green',
+        })
+
+    return subsidiaries
 
 
 # ================================================================
