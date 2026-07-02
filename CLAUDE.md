@@ -151,7 +151,7 @@ Calls 8 core QCC tools in parallel (registration, shareholders, personnel, finan
 
 **If exit code 4 with "积分余额不足":** Hard stop. Tell user to recharge QCC credits. Do NOT substitute with web search — the 🟢 foundational data is missing.
 
-**If extension servers report auth errors:** Tell user to run `python oauth_qcc.py auth --resource <server>`. Core data collection continues without them.
+**If extension servers report auth errors:** Run `python oauth_qcc.py auth --resource <server>` yourself — it opens a browser for authorization. Core data collection continues without extension data while waiting.
 
 ### Step 1.5: PDF 募集说明书补充（资产负债表详细科目）
 
@@ -474,6 +474,15 @@ fill_field(data, 高管姓名, content=履历摘要, source_url=...)
 - **Never fabricate.** If nothing is found, write "经检索未发现公开数据" and leave empty source_url
 - Cross-verify critical fields with 2-3 different search queries
 
+**⚠️ 导出前自检（必须执行！）：**
+
+```bash
+cd keyclientkit
+PYTHONIOENCODING=utf-8 python pipeline/export.py --client {企业名称} --stats
+```
+
+如果输出显示 `🟡 Web搜索: X` 且 `⚠️ 以下 🟡 字段为空`，**必须回到 Step 2 补搜**，不得使用 `--force` 强制导出。只有当所有 🟡 字段都已搜索（搜不到已标注"经检索未发现"）才能进入 Step 3。
+
 ### Step 3: Export Reports (must execute, do not skip)
 
 ```bash
@@ -481,7 +490,7 @@ cd keyclientkit
 PYTHONIOENCODING=utf-8 python pipeline/export.py --client {企业名称}
 ```
 
-If blocked by empty 🟡 fields, use `--force` or return to Step 2.
+**禁止使用 `--force`** 除非用户明确要求。如果被守卫拦截，回到 Step 2 补搜被列出的空字段。
 
 Generates: `output/{企业名称}_核对表.xlsx` and `output/{企业名称}合作策略_报告.html`.
 
@@ -510,7 +519,7 @@ Merges user's 🔴-field edits from Excel back into JSON via positional key matc
 
 ## Troubleshooting
 
-- **OAuth expired**: Run `python oauth_qcc.py status`. Tokens auto-refresh, but if all are dead, re-auth: `python oauth_qcc.py auth`.
+- **OAuth expired**: Run `python oauth_qcc.py status` to check. If tokens are dead, **you (AI agent) execute `python oauth_qcc.py auth` yourself** — it will open a browser for the user to complete authorization. Only if the browser fails to open (headless/SSH environment), ask the user to run it manually.
 - **Module not found (requests/openpyxl)**: `pip install requests openpyxl --only-binary :all:` (avoids Windows ARM64 compilation issues).
 - **Excel readback mismatches**: Positional matching breaks if rows were inserted/deleted/reordered. Tell user not to modify column A or add/remove rows.
 - **Points exhaustion (exit code 4)**: Hard stop — QCC credits depleted. Do not attempt web search fallback.

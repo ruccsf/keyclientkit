@@ -189,9 +189,9 @@ def get_search_plans(data: dict = None) -> list[SearchPlan]:
     # === Ch1(2) 行业分析 ===
     plans.extend([
         SearchPlan('重要行业政策', '重要行业政策',
-            queries=[f'{industry} 行业政策 十四五 2025 发改委', f'{industry} 产业政策 最新 2025'],
+            queries=[f'{company} 行业 政策 十四五 2025 发改委', f'{industry} 产业政策 最新 2025 2026'],
             priority_domains=['gov.cn', 'ndrc.gov.cn', 'miit.gov.cn'],
-            extract_hint='摘取1-3个最重要的行业政策名称、发布机构、核心要点',
+            extract_hint='摘取1-3个最重要的行业政策名称、发布机构、核心要点（不限于搜索公司名，扩展到所属行业大类的政策）',
             target_table='行业分析', target_row_key='重要行业政策'),
 
         SearchPlan('行业特征与周期', '行业特征与周期',

@@ -1253,12 +1253,12 @@ def fill_extended_qcc_data(data: dict, extended: dict, personnel: list = None):
                     r['备注/来源'] = '企查查 API: qcc-ipr'
                     r['_status'] = 'green'
         else:
-            # QCC 检索了但未发现记录
+            # QCC 检索了但未发现记录 — 留 🟡 让 WebSearch 补搜专利/商标/品牌
             for r in ch1_sec1['tables'][3]['data']:
                 if '专利' in r.get('信息项', ''):
-                    r['内容'] = '经企查查知识产权数据库检索，该主体暂无APP/特许经营备案记录'
+                    r['内容'] = '经企查查知识产权数据库检索，该主体暂无APP/特许经营备案记录（还需搜索专利、商标、知名品牌等公开信息）'
                     r['备注/来源'] = '企查查 API: qcc-ipr — 检索无记录'
-                    r['_status'] = 'green'
+                    r['_status'] = 'yellow'
 
     # --- Ch1(2) 近期发展动向：风险数据 (qcc-risk) ---
     risk = extended.get('risk', {})

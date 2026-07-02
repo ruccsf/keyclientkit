@@ -71,6 +71,7 @@ def print_stats(data: dict):
                     elif st == 'yellow': yellows += 1
                     else: reds += 1
     total = greens + yellows + reds
+    empty_y, total_y, details = _check_yellow_fields(data)
     print(f'\n📊 数据统计')
     print(f'  公司: {data["meta"]["client_name"]}')
     print(f'  行业: {data["cover"]["所属行业"]["value"]}')
@@ -79,15 +80,20 @@ def print_stats(data: dict):
     print(f'  🟡 Web搜索: {yellows} ({yellows*100//total}%)')
     print(f'  🔴 待人工填: {reds} ({reds*100//total}%)')
     print(f'  自动填充率: {(greens+yellows)*100//total}%')
+    if empty_y > 0:
+        print(f'\n⚠️  以下 {empty_y}/{total_y} 个 🟡 字段为空：')
+        _print_empty_summary(details)
 
 
-def _check_yellow_fields(data: dict) -> int:
+def _check_yellow_fields(data: dict) -> tuple[int, int, dict]:
     """
     检查 🟡 字段是否都已处理。
-    返回未搜索的空 🟡 行数（已标注"经检索未发现"的不计入）。
+    返回 (未搜索数, 总数, {表名: [字段列表]})。
     """
     empty_yellows = 0
     total_yellows = 0
+    empty_details = {}  # {table_title: [field_keys...]}
+
     for ch_val in data.get('chapters', {}).values():
         if not isinstance(ch_val, dict):
             continue
@@ -95,15 +101,49 @@ def _check_yellow_fields(data: dict) -> int:
             if not isinstance(sec_val, dict):
                 continue
             for tbl in sec_val.get('tables', []):
+                tbl_title = tbl.get('title', '未知表')
                 for row in tbl.get('data', []):
                     if row.get('_status') != 'yellow':
                         continue
                     total_yellows += 1
                     content_col = _find_content_column(row)
                     content = str(row.get(content_col, '')).strip() if content_col else ''
+                    # 多列表：检查所有数据列是否全空
                     if not content:
-                        empty_yellows += 1
-    return empty_yellows, total_yellows
+                        # 对 list 表，检查是否所有非键列都为空
+                        all_empty = True
+                        for k, v in row.items():
+                            if not k.startswith('_') and k not in ('信息项', '分析维度', '指标', '财务指标',
+                                    '动向类别', '年份', '债券类型', '需求类型', '维度', '产品类别',
+                                    '风险类别', '准入方式', '合作维度', '未覆盖业务领域', '短板类别',
+                                    '目标维度', '拓展方向', '子公司名称', '银行', '职务', '备注/来源',
+                                    '数据来源', '备注', '来源', '内容', '核心内容', '具体内容',
+                                    '付息负债总额(万元)', '发行金额(万元)', '余额(万元)'):
+                                if str(v).strip():
+                                    all_empty = False
+                                    break
+                        if all_empty:
+                            empty_yellows += 1
+                            # 找行标识
+                            row_key = ''
+                            for c in ['信息项', '分析维度', '指标', '财务指标', '动向类别',
+                                      '年份', '债券类型', '需求类型', '子公司名称']:
+                                if row.get(c):
+                                    row_key = str(row[c])[:40]
+                                    break
+                            if not row_key:
+                                row_key = '(未知)'
+                            empty_details.setdefault(tbl_title, []).append(row_key)
+
+    return empty_yellows, total_yellows, empty_details
+
+
+def _print_empty_summary(details: dict):
+    """打印未填充 🟡 字段的按表汇总。"""
+    for tbl, fields in details.items():
+        names = '、'.join(fields[:5])
+        more = f' ...等{len(fields)}个' if len(fields) > 5 else ''
+        print(f'   📋 {tbl}: {names}{more}')
 
 
 def _check_subsidiary_pdf_data(data: dict) -> int:
@@ -159,15 +199,18 @@ def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
         data = json.load(f)
 
     # 🟡 字段检查：所有 yellow 字段必须已搜索（内容非空或已标注"经检索未发现"）
-    empty_yellows, total_yellows = _check_yellow_fields(data)
+    empty_yellows, total_yellows, empty_details = _check_yellow_fields(data)
     if empty_yellows > 0 and not force:
         print()
-        print(f'❌ 还有 {empty_yellows}/{total_yellows} 个 🟡 字段未搜索')
+        print(f'❌ 还有 {empty_yellows}/{total_yellows} 个 🟡 字段未搜索：')
+        _print_empty_summary(empty_details)
         print(f'   请先完成 Web 搜索填充（搜不到请标注"经检索未发现公开数据"）')
         print(f'   强制导出: python pipeline/export.py --client {client_name} --force')
         sys.exit(1)
     elif empty_yellows > 0 and force:
-        print(f'⚠️  --force: 跳过 🟡 字段检查（{empty_yellows}/{total_yellows} 个未搜索）')
+        print()
+        print(f'⚠️  --force: {empty_yellows}/{total_yellows} 个 🟡 字段为空，直接导出：')
+        _print_empty_summary(empty_details)
     elif total_yellows > 0:
         print(f'✅ 🟡 字段已全部搜索（{total_yellows} 行）')
 
