@@ -25,6 +25,7 @@ PDF 募集说明书数据提取器
 """
 
 import re
+import os
 import sys
 import json
 import urllib.request
@@ -143,9 +144,10 @@ def cache_pdf(src_path: str, client_name: str) -> Path:
 def ask_pdf_path() -> Optional[str]:
     """
     弹出系统文件对话框，让用户选择 PDF 文件。
-    仅交互式环境弹窗（AI agent 模式回退返回 None）。
+    非桌面环境（AI agent / 远程终端 / CI）跳过弹窗。
     """
-    if not sys.stdin.isatty():
+    _no_gui = os.environ.get('WORKBUDDY_AGENT') or os.environ.get('CI') or os.environ.get('SSH_CLIENT')
+    if _no_gui:
         return None
 
     try:
