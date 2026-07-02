@@ -57,6 +57,25 @@ OUTPUT_DIR = SKILL_DIR / 'output'
 sys.path.insert(0, str(PIPELINE_DIR))
 from web_filler import _find_content_column
 
+AUDIT_DIR = OUTPUT_DIR  # 审计日志和报告放同一目录
+
+
+def _write_audit(audit: dict, result: str):
+    """写入审计日志。"""
+    audit['result'] = result
+    audit_path = AUDIT_DIR / f"{audit['client']}_审计_{audit['timestamp'][:10]}.json"
+    # 追加模式：同一天多次导出合并
+    entries = []
+    if audit_path.exists():
+        try:
+            with open(audit_path, 'r', encoding='utf-8') as f:
+                entries = json.load(f)
+        except Exception:
+            entries = []
+    entries.append(audit)
+    with open(audit_path, 'w', encoding='utf-8') as f:
+        json.dump(entries, f, ensure_ascii=False, indent=2)
+
 
 def print_stats(data: dict):
     greens = yellows = reds = 0
@@ -198,8 +217,22 @@ def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
     with open(session_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
+    # 审计日志
+    audit = {
+        'client': client_name,
+        'timestamp': datetime.now().isoformat(),
+        'force_used': force,
+        'env_force': bool(os.environ.get('WORKBUDDY_FORCE_EXPORT')),
+        'guards': {},
+        'result': 'unknown',
+    }
+
     # 🟡 字段检查：所有 yellow 字段必须已搜索（内容非空或已标注"经检索未发现"）
     empty_yellows, total_yellows, empty_details = _check_yellow_fields(data)
+    audit['guards']['yellow_fields'] = {
+        'empty': empty_yellows, 'total': total_yellows,
+        'details': {k: len(v) for k, v in empty_details.items()},
+    }
     if empty_yellows > 0:
         print()
         print(f'❌ 还有 {empty_yellows}/{total_yellows} 个 🟡 字段未搜索：')
@@ -209,12 +242,14 @@ def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
         else:
             print(f'   请先完成 Web 搜索填充（搜不到请标注"经检索未发现公开数据"）')
             print(f'   如需强制导出: WORKBUDDY_FORCE_EXPORT=1 python pipeline/export.py --client {client_name} --force')
+            _write_audit(audit, 'blocked')
             sys.exit(1)
     elif total_yellows > 0:
         print(f'✅ 🟡 字段已全部搜索（{total_yellows} 行）')
 
     # 子公司 PDF 数据检查：注册地/国标行业必须已填充
     empty_subs = _check_subsidiary_pdf_data(data)
+    audit['guards']['subsidiary_pdf'] = {'empty': empty_subs}
     if empty_subs > 0:
         print()
         print(f'❌ 子公司表缺少 PDF 数据：{empty_subs} 家子公司的注册地/国标行业为空')
@@ -223,12 +258,14 @@ def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
         else:
             print(f'   请先完成 Step 1.5 PDF 募集书补充（子公司数据唯一来源）')
             print(f'   如需强制导出: WORKBUDDY_FORCE_EXPORT=1 python pipeline/export.py --client {client_name} --force')
+            _write_audit(audit, 'blocked')
             sys.exit(1)
     else:
         print(f'✅ 子公司 PDF 数据已填充')
 
     # 高管履历检查：🟡 履历列必须已搜索
     empty_resumes, total_resumes = _check_executive_resumes(data)
+    audit['guards']['executive_resumes'] = {'empty': empty_resumes, 'total': total_resumes}
     if empty_resumes < 0:
         print('⚠️  未找到高管信息表，跳过履历检查')
     elif empty_resumes > 0:
@@ -239,6 +276,7 @@ def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
         else:
             print(f'   请先完成 Step 2 高管履历搜索')
             print(f'   如需强制导出: WORKBUDDY_FORCE_EXPORT=1 python pipeline/export.py --client {client_name} --force')
+            _write_audit(audit, 'blocked')
             sys.exit(1)
     else:
         print(f'✅ 高管履历已填充（{total_resumes} 人）')
@@ -269,6 +307,7 @@ def cmd_export(client_name: str, excel_only=False, html_only=False, force=False,
         print(f'✅ HTML:  {html_path.name} ({size_kb}KB)')
 
     print_stats(data)
+    _write_audit(audit, 'passed' if not (empty_yellows or empty_subs or empty_resumes > 0) else 'forced')
     return data
 
 
